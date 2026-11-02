@@ -1006,7 +1006,13 @@ class RuntimeInstaller(private val context: Context) {
     ): File {
         downloads.mkdirs()
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        // The offline flavor must always use its embedded bundles because there is
+        // no network fallback by design. Online builds may request the embedded copy
+        // (e.g. Antigravity), but a stripped build without that asset must still be
+        // able to fetch it from the release URL instead of failing the install.
+        val embeddedRequested = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val useEmbedded = embeddedRequested &&
+            (BuildConfig.OFFLINE_RUNTIME_BUNDLES || hasBundledAsset(bundle))
         if (useEmbedded) {
             val loadingLabel = str(R.string.rt_install_loading_bundle, bundle.label)
             onProgress(RuntimeInstallProgress(loadingLabel, from, 0, bundle.compressedBytes))
@@ -1042,6 +1048,9 @@ class RuntimeInstaller(private val context: Context) {
         }
         return destination
     }
+
+    private fun hasBundledAsset(bundle: RuntimeBundle): Boolean =
+        runCatching { context.assets.open("runtime/${bundle.fileName}").close() }.isSuccess
 
     private suspend fun installZipAsset(
         url: String,

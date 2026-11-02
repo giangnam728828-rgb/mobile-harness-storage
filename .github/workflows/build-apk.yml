@@ -30,6 +30,16 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
 
+    # The online APK embeds the Antigravity overlay because AgentInstaller prefers
+    # the bundled copy. dist/runtime-bundles/*.tar.zst is gitignored, so without
+    # this step the APK silently ships without it and Antigravity cannot install.
+    - name: Fetch bundled agent assets
+      run: |
+        mkdir -p dist/runtime-bundles
+        curl -fL --retry 3 -o dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst \
+          https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4/pocketdev-agy-arm64-2026.09.1.tar.zst
+        echo "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78  dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst" | sha256sum -c -
+
     - name: Build Online Debug APK
       run: |
         chmod +x gradlew
