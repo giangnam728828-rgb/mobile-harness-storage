@@ -67,6 +67,9 @@ android {
                 storePassword = checkNotNull(uploadStorePassword)
                 keyAlias = checkNotNull(uploadKeyAlias)
                 keyPassword = checkNotNull(uploadKeyPassword)
+                // CI ships a PKCS12 bundle produced by openssl so every build
+                // carries the same certificate and can upgrade the previous one.
+                storeType = providers.environmentVariable("MH_UPLOAD_STORE_TYPE").orNull ?: "PKCS12"
                 // AGP drops the legacy JAR signature for minSdk >= 24, but some
                 // OEM installers (vivo) reject APKs without it as "missing the
                 // developer certificate". Keep both; the key is unchanged.
@@ -132,6 +135,12 @@ android {
                 "TEST_OPENROUTER_API_KEY",
                 buildConfigString(testSecrets.getProperty("openrouter.apiKey", "")),
             )
+            // Without this, CI falls back to AGP's auto-generated debug key,
+            // which is recreated per runner and changes the certificate on
+            // every build — making each APK unable to upgrade the previous one.
+            if (hasUploadSigning) {
+                signingConfig = signingConfigs.getByName("upload")
+            }
         }
         release {
             isMinifyEnabled = false

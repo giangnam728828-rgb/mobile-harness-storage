@@ -5,6 +5,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,10 +43,36 @@ jobs:
           https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4/pocketdev-agy-arm64-2026.09.1.tar.zst
         echo "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78  dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst" | sha256sum -c -
 
+    # A stable certificate is what allows a new build to upgrade the installed
+    # app. AGP's auto-generated debug key differs on every runner, so CI must
+    # sign with the project key stored in repository secrets.
+    - name: Decode signing keystore
+      env:
+        MH_UPLOAD_STORE_BASE64: ${{ secrets.MH_UPLOAD_STORE_BASE64 }}
+      run: |
+        if [ -z "$MH_UPLOAD_STORE_BASE64" ]; then
+          echo "::error::MH_UPLOAD_STORE_BASE64 secret is missing; APK would be signed with a throwaway key"
+          exit 1
+        fi
+        printf '%s' "$MH_UPLOAD_STORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/dist/mh-upload.p12"
+        chmod 600 "$GITHUB_WORKSPACE/dist/mh-upload.p12"
+
     - name: Build Online Debug APK
+      env:
+        MH_UPLOAD_STORE_FILE: ${{ github.workspace }}/dist/mh-upload.p12
+        MH_UPLOAD_STORE_PASSWORD: ${{ secrets.MH_UPLOAD_STORE_PASSWORD }}
+        MH_UPLOAD_KEY_ALIAS: ${{ secrets.MH_UPLOAD_KEY_ALIAS }}
+        MH_UPLOAD_KEY_PASSWORD: ${{ secrets.MH_UPLOAD_KEY_PASSWORD }}
+        MH_UPLOAD_STORE_TYPE: PKCS12
       run: |
         chmod +x gradlew
         ./gradlew assembleOnlineDebug --stacktrace
+
+    - name: Print signing certificate
+      run: |
+        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+        "$BT/apksigner" verify --print-certs "$APK" | grep -E "Signer #1 certificate (DN|SHA-256)"
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
@@ -51,3 +80,19 @@ jobs:
         name: mobile-harness-storage-debug
         path: app/build/outputs/apk/online/debug/*.apk
         retention-days: 30
+
+    # Artifacts require a GitHub login to download; a release asset gives the
+    # phone one permanent direct link that always points at the newest build.
+    - name: Publish APK to latest release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG=apk-latest
+        mkdir -p out
+        cp "$(ls app/build/outputs/apk/online/debug/*.apk | head -1)" out/mobile-harness-storage-debug.apk
+        if ! gh release view "$TAG" >/dev/null 2>&1; then
+          gh release create "$TAG" --title "Latest storage build" \
+            --notes "Auto-built from main. Always download mobile-harness-storage-debug.apk." \
+            --prerelease
+        fi
+        gh release upload "$TAG" out/mobile-harness-storage-debug.apk --clobber
