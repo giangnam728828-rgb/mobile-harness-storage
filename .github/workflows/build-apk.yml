@@ -68,11 +68,24 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleOnlineDebug --stacktrace
 
-    - name: Print signing certificate
+    # Fail the build if the APK is not signed with the project key. Without this
+    # check a missing or mistyped secret would silently produce an APK that
+    # cannot upgrade the installed app.
+    - name: Verify signing certificate
+      env:
+        EXPECTED_CERT_SHA256: 6e9e57be2c4c9f2a15234f932f1153deb6076a894d2bae283ba44c3667f73975
       run: |
+        set -euo pipefail
         APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
-        BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
-        "$BT/apksigner" verify --print-certs "$APK" | grep -E "Signer #1 certificate (DN|SHA-256)"
+        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
+        CERTS=$("$BT/apksigner" verify --print-certs "$APK")
+        echo "$CERTS" | grep -E "Signer #1 certificate (DN|SHA-256)"
+        ACTUAL=$(echo "$CERTS" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+        if [ "$ACTUAL" != "$EXPECTED_CERT_SHA256" ]; then
+          echo "::error::APK signed with '$ACTUAL', expected '$EXPECTED_CERT_SHA256'"
+          exit 1
+        fi
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
