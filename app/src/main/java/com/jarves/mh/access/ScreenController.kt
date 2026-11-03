@@ -9,7 +9,6 @@ import com.jarves.mh.model.ScreenActionKind
 import com.jarves.mh.model.ScreenActionRequest
 import com.jarves.mh.model.ScreenActionResult
 import com.jarves.mh.model.ScreenActionStatus
-import com.jarves.mh.model.ScreenTextOutcome
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -42,10 +41,8 @@ object ScreenController {
                 ScreenActionKind.BACK -> global(svc, AccessibilityService.GLOBAL_ACTION_BACK, request)
                 ScreenActionKind.HOME -> global(svc, AccessibilityService.GLOBAL_ACTION_HOME, request)
                 ScreenActionKind.RECENTS -> global(svc, AccessibilityService.GLOBAL_ACTION_RECENTS, request)
-                ScreenActionKind.SCROLL_FORWARD ->
-                    global(svc, AccessibilityService.GLOBAL_ACTION_SCROLL_FORWARD, request)
-                ScreenActionKind.SCROLL_BACKWARD ->
-                    global(svc, AccessibilityService.GLOBAL_ACTION_SCROLL_BACKWARD, request)
+                ScreenActionKind.SCROLL_FORWARD -> scroll(request, forward = true)
+                ScreenActionKind.SCROLL_BACKWARD -> scroll(request, forward = false)
                 ScreenActionKind.TYPE -> typeText(request)
                 ScreenActionKind.WAIT -> {
                     Thread.sleep(request.durationMs.toLong())
@@ -72,6 +69,51 @@ object ScreenController {
             if (ok) ScreenActionStatus.OK else ScreenActionStatus.FAILED,
             if (ok) "" else "系统拒绝了这个动作",
         )
+    }
+
+    /**
+     * Scrolls the first scrollable node under the active window.
+     *
+     * AccessibilityService has no global scroll action, so this has to walk to a scrollable
+     * node and ask it directly. If nothing scrollable is on screen the agent gets FAILED
+     * rather than a silent no-op.
+     */
+    private fun scroll(request: ScreenActionRequest, forward: Boolean): ScreenActionResult {
+        val svc = service
+            ?: return ScreenActionResult(request.id, ScreenActionStatus.FAILED, "无障碍服务未连接")
+        val root = svc.rootInActiveWindow
+            ?: return ScreenActionResult(request.id, ScreenActionStatus.FAILED, "没有可操作的窗口")
+        val scrollable = runCatching { findScrollable(root) }.getOrNull()
+        if (scrollable == null) {
+            runCatching { root.recycle() }
+            return ScreenActionResult(request.id, ScreenActionStatus.FAILED, "当前界面没有可滚动区域")
+        }
+        val action = if (forward) {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        } else {
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        }
+        val ok = scrollable.performAction(action)
+        runCatching { scrollable.recycle() }
+        runCatching { root.recycle() }
+        return ScreenActionResult(
+            request.id,
+            if (ok) ScreenActionStatus.OK else ScreenActionStatus.FAILED,
+            if (ok) "" else "已经滑到底了，或者这个区域不支持滚动",
+        )
+    }
+
+    /** Depth-first search for the first node that reports itself scrollable. */
+    private fun findScrollable(node: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > 25) return null
+        if (node.isScrollable) return node
+        for (index in 0 until node.childCount) {
+            val child = runCatching { node.getChild(index) }.getOrNull() ?: continue
+            val found = findScrollable(child, depth + 1)
+            if (found != null) return found
+            runCatching { child.recycle() }
+        }
+        return null
     }
 
     private fun dispatchTap(svc: AccessibilityService, request: ScreenActionRequest): ScreenActionResult {
@@ -151,9 +193,6 @@ object ScreenController {
             if (ok) "" else "输入框拒绝了这个操作",
         )
     }
-
-    /** Used by the settings screen to prove gestures work without an agent involved. */
-    fun probe(svc: AccessibilityService): ScreenTextOutcome = ScreenTextOutcome(true, "")
 
     /** Package name of the window the user is looking at, for the blocklist check. */
     fun currentPackage(): String? = runCatching {

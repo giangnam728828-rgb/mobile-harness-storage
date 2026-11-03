@@ -105,6 +105,3 @@ data class ScreenActionResult(
         put("snapshot", snapshot)
     }
 }
-
-/** Result of a one-off text input helper, kept separate so the blocklist check is obvious. */
-data class ScreenTextOutcome(val ok: Boolean, val detail: String)

@@ -1,9 +1,7 @@
 package com.jarves.mh.access
 
-import android.content.Context
 import com.jarves.mh.model.ScreenActionRequest
 import com.jarves.mh.model.ScreenActionResult
-import org.json.JSONObject
 import java.io.File
 
 /**
@@ -72,11 +70,4 @@ object ScreenActionFiles {
             if (file.lastModified() < cutoff) runCatching { file.delete() }
         }
     }
-
-    /** Human readable workspace root used only for diagnostics. */
-    fun describe(context: Context, projectId: String): String =
-        File(context.filesDir, "workspaces/$projectId").absolutePath
 }
-
-/** Serialises a mailbox reply for logging; kept here so the wire format lives in one place. */
-internal fun ScreenActionResult.asWireJson(): JSONObject = toJson()
