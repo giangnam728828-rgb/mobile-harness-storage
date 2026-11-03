@@ -67,6 +67,7 @@ class DshRuntimeBridge(
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest>,
+        screenContext: String,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
@@ -136,7 +137,7 @@ class DshRuntimeBridge(
             if (route.keyEnv != FALLBACK_KEY_ENV) environment.remove(FALLBACK_KEY_ENV)
 
             val guestWorkspacePath = "/workspace/$projectSlug"
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins)
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext)
             val command = listOf("/usr/local/bin/dsh", "--profile", "sdk")
             Log.d("DshBridge", "Route: ${route.name}, Model: ${provider.model}")
             val process = installer.process(
@@ -574,7 +575,14 @@ class DshRuntimeBridge(
         }
     }
 
-    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String, projectKind: ProjectKind, plugins: List<com.jarves.mh.model.PluginManifest>): String {
+    private fun buildContextPrompt(
+        currentPrompt: String,
+        history: List<ChatMessage>,
+        guestWorkspacePath: String,
+        projectKind: ProjectKind,
+        plugins: List<com.jarves.mh.model.PluginManifest>,
+        screenContext: String,
+    ): String {
         val priorMessages = history
             .filter { msg ->
                 (msg.fromUser || !msg.text.startsWith("Hi! Tell me")) &&
@@ -608,6 +616,11 @@ class DshRuntimeBridge(
         sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
         sb.appendLine("</project_workspace>")
         sb.appendLine()
+        val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext)
+        if (screenSection.isNotBlank()) {
+            sb.append(screenSection)
+            sb.appendLine()
+        }
         val pluginSection = com.jarves.mh.model.PluginPrompt.section(plugins, guestWorkspacePath)
         if (pluginSection.isNotBlank()) {
             sb.append(pluginSection)

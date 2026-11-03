@@ -78,6 +78,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -165,6 +166,8 @@ fun SettingsScreen(
     onDeletePlugin: (String) -> Unit = {},
     onAddPlugin: (String) -> Unit = {},
     onRunPluginTool: (String, String) -> Unit = { _, _ -> },
+    onShareScreenContext: (Boolean) -> Unit = {},
+    onCleanEmptyProjects: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -344,7 +347,10 @@ fun SettingsScreen(
                     expanded = expanded == SettingsSection.SCREEN_READER,
                     onClick = { toggle(SettingsSection.SCREEN_READER) },
                 ) {
-                    ScreenReaderSection()
+                    ScreenReaderSection(
+                        shareWithAgent = state.screenContextForAgent,
+                        onShareWithAgent = onShareScreenContext,
+                    )
                 }
             }
 
@@ -482,6 +488,25 @@ fun SettingsScreen(
                             )
                         }
                         if (index != DevStack.entries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.st_clean_empty_projects), fontWeight = FontWeight.SemiBold)
+                            Text(
+                                stringResource(R.string.st_clean_empty_projects_desc),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onCleanEmptyProjects,
+                            enabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                        ) {
+                            Text(stringResource(R.string.st_clean_empty_projects))
+                        }
                     }
                 }
             }
@@ -744,6 +769,8 @@ private fun PluginsSection(
     val clipboard = LocalClipboardManager.current
     var adding by rememberSaveable { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
+    // Tool lists longer than the preview cap get an expander, so every tool stays reachable.
+    val expandedPlugins = remember { mutableStateMapOf<String, Boolean>() }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -780,7 +807,13 @@ private fun PluginsSection(
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                plugin.tools.take(MAX_VISIBLE_PLUGIN_TOOLS).forEach { tool ->
+                                val isExpanded = expandedPlugins[plugin.id] == true
+                                val visibleTools = if (isExpanded) {
+                                    plugin.tools
+                                } else {
+                                    plugin.tools.take(MAX_VISIBLE_PLUGIN_TOOLS)
+                                }
+                                visibleTools.forEach { tool ->
                                     val toolKey = "${plugin.id}/${tool.id}"
                                     val isRunning = runningToolId == toolKey
                                     Row(
@@ -821,12 +854,22 @@ private fun PluginsSection(
                                 }
                                 if (plugin.toolCount > MAX_VISIBLE_PLUGIN_TOOLS) {
                                     Text(
-                                        stringResource(
-                                            R.string.plugins_more_tools,
-                                            plugin.toolCount - MAX_VISIBLE_PLUGIN_TOOLS,
-                                        ),
+                                        if (isExpanded) {
+                                            stringResource(R.string.plugins_show_less)
+                                        } else {
+                                            stringResource(
+                                                R.string.plugins_more_tools,
+                                                plugin.toolCount - MAX_VISIBLE_PLUGIN_TOOLS,
+                                            )
+                                        },
                                         fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                expandedPlugins[plugin.id] = !isExpanded
+                                            }
+                                            .padding(vertical = 4.dp, horizontal = 2.dp),
                                     )
                                 }
                             }
@@ -942,13 +985,18 @@ private fun PluginsSection(
 }
 
 @Composable
-private fun ScreenReaderSection() {
+private fun ScreenReaderSection(
+    shareWithAgent: Boolean,
+    onShareWithAgent: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var enabled by remember { mutableStateOf(ScreenReaderService.isEnabled(context)) }
     val liveSnapshot by ScreenReaderService.screenSnapshot.collectAsState()
     var captured by remember { mutableStateOf("") }
 
+    // The user can flip the service off in system settings while this screen is open, so
+    // re-read the state whenever the section is composed back into view.
     LaunchedEffect(Unit) {
         enabled = ScreenReaderService.isEnabled(context)
         if (enabled && captured.isBlank()) captured = ScreenReaderService.currentText()
@@ -961,6 +1009,30 @@ private fun ScreenReaderSection() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 13.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.screen_reader_share_title), fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(R.string.screen_reader_share_desc),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = shareWithAgent && enabled,
+                    enabled = enabled,
+                    onCheckedChange = onShareWithAgent,
+                )
+            }
+        }
+
         if (!enabled) {
             Button(
                 onClick = {
@@ -969,6 +1041,12 @@ private fun ScreenReaderSection() {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(stringResource(R.string.screen_reader_enable))
+            }
+            OutlinedButton(
+                onClick = { enabled = ScreenReaderService.isEnabled(context) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.screen_reader_recheck))
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

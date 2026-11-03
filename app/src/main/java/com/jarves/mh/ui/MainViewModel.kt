@@ -303,6 +303,8 @@ data class AppUiState(
     val pluginRunTitle: String = "",
     /** Captured output of the last plugin tool run. */
     val pluginRunOutput: String = "",
+    /** Whether an agent session may read the current screen. */
+    val screenContextForAgent: Boolean = false,
     val projectImporting: Boolean = false,
     val projectImportMessage: String? = null,
     val gitCloneRunning: Boolean = false,
@@ -520,6 +522,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Screen snapshot to attach to a new session, or an empty string when the user has not
+     * opted in or the accessibility service is not running.
+     *
+     * Read at send time rather than kept live so the agent sees the screen the user was
+     * looking at when they wrote the message, not whatever is on screen later.
+     */
+    private fun currentScreenContext(): String {
+        if (!_state.value.screenContextForAgent) return ""
+        val app = getApplication<Application>()
+        if (!com.jarves.mh.access.ScreenReaderService.isEnabled(app)) return ""
+        return com.jarves.mh.access.ScreenReaderService.currentText()
+    }
+
+    /** Turns screen sharing on or off for agent sessions. */
+    fun setScreenContextForAgent(enabled: Boolean) {
+        preferences.screenContextForAgent = enabled
+        _state.update { it.copy(screenContextForAgent = enabled) }
+    }
+
     /** Installs a manifest pasted by the user; returns false when the JSON is unusable. */
     fun addPlugin(rawJson: String): Boolean {
         val manifest = com.jarves.mh.model.PluginManifest.fromJson(rawJson) ?: return false
@@ -643,8 +665,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Plugins are data-only and live in SharedPreferences, so they can be read
         // synchronously once _state exists, without touching the runtime.
         val storedPlugins = preferences.loadPlugins()
-        if (storedPlugins.isNotEmpty()) {
-            _state.update { it.copy(plugins = storedPlugins) }
+        _state.update {
+            it.copy(
+                plugins = storedPlugins,
+                screenContextForAgent = preferences.screenContextForAgent,
+            )
         }
         viewModelScope.launch {
             AndroidAppInstaller.events.collect { event ->
@@ -1182,12 +1207,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var offset = 0L
         val output = StringBuilder()
         var autoConfirmed = false
+        // A command that stalls on a dead connection would otherwise spin here forever with
+        // no way out but a manual stop. Track silence rather than total runtime, so a long
+        // but chatty build is never killed while a genuinely stuck one still is.
+        var lastOutputAt = System.currentTimeMillis()
+        var idleTimedOut = false
         while (process.isAlive || native.outputFile.length() > offset) {
             val available = native.outputFile.length() - offset
             if (available <= 0) {
+                if (System.currentTimeMillis() - lastOutputAt > TERMINAL_IDLE_TIMEOUT_MS) {
+                    idleTimedOut = true
+                    runCatching { process.destroy() }
+                    Thread.sleep(500)
+                    if (process.isAlive) runCatching { process.destroyForcibly() }
+                    break
+                }
                 Thread.sleep(50)
                 continue
             }
+            lastOutputAt = System.currentTimeMillis()
             val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
             val count = RandomAccessFile(native.outputFile, "r").use { file ->
                 file.seek(offset)
@@ -1224,10 +1262,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?.trim()
             ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
             ?: cwd
-        val cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
+        var cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
             .trim()
-            .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-        return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
+        if (idleTimedOut) {
+            cleanOutput = str(
+                R.string.vm_terminal_idle_timeout,
+                (TERMINAL_IDLE_TIMEOUT_MS / 60_000L).toString(),
+            ) + "\n" + cleanOutput
+        }
+        return ProjectTerminalResult(cleanOutput.takeLast(MAX_PROJECT_TERMINAL_OUTPUT), exitCode, cwdAfter)
     }
 
     private fun sendProcessInput(process: Process?, text: String) {
@@ -3990,6 +4033,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Deletes every project that has no user messages and no user files.
+     *
+     * Mirrors the single-project auto-cleanup in [closeProject], but for the whole list:
+     * quick chats left over from tapping around are what clog the drawer. The active
+     * project and anything currently running are left alone.
+     */
+    fun deleteEmptyProjects() {
+        val state = _state.value
+        if (state.isRunning || state.projectTerminalRunning || state.androidBuildRunning) return
+        val activeId = state.activeProject?.id
+        val filesDir = getApplication<Application>().filesDir
+        val candidates = state.projects.filter { project ->
+            if (project.id == activeId) return@filter false
+            val chats = preferences.loadProjectChats(project.id)
+            val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
+            if (userMessages > 0) return@filter false
+            val workspaceDir = File(filesDir, "workspaces/${project.id}")
+            val userFiles = if (workspaceDir.isDirectory) {
+                workspaceDir.walkTopDown().count { file ->
+                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                }
+            } else 0
+            userFiles == 0
+        }
+        if (candidates.isEmpty()) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_no_empty_projects)) }
+            return
+        }
+        val removedIds = candidates.map { it.id }.toSet()
+        _state.update { current ->
+            current.copy(
+                projects = current.projects.filterNot { it.id in removedIds },
+                toastMessage = str(R.string.vm_empty_projects_removed, candidates.size),
+            )
+        }
+        preferences.saveProjects(_state.value.projects)
+        folderMetadataCache.keys.removeAll { key -> removedIds.any { key.startsWith("$it:") } }
+        viewModelScope.launch(Dispatchers.IO) {
+            candidates.forEach { project ->
+                File(filesDir, "workspaces/${project.id}").deleteRecursively()
+                terminalHistoryFile(project.id).delete()
+                androidBuildRecordFile(project.id).delete()
+                preferences.deleteProjectChats(project.id)
+            }
+        }
+    }
+
     private fun detectNestedProjectRoot(project: Project): String? {
         val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
         if (!base.isDirectory) return null
@@ -4948,6 +5039,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     request.history,
                     request.provider,
                     _state.value.plugins,
+                    currentScreenContext(),
                 )
             }
         }
@@ -5407,6 +5499,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 request.history,
                 request.provider,
                 _state.value.plugins,
+                currentScreenContext(),
             )
         }
         return true
@@ -5552,6 +5645,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
+        /** Kill a project-terminal command after this long with no new output at all. */
+        private const val TERMINAL_IDLE_TIMEOUT_MS = 30L * 60 * 1000
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val LIVE_OUTPUT_FRAME_NANOS = 120_000_000L
         private const val MAX_ANDROID_BUILD_LOG = 300_000

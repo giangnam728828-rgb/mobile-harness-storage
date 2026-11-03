@@ -220,4 +220,13 @@
     <string name="plugins_timed_out">已超时（%1$d 秒）</string>
     <string name="plugins_run">运行</string>
     <string name="plugins_output_title">上次运行</string>
+    <string name="screen_reader_share_title">允许 AI 读取当前屏幕</string>
+    <string name="screen_reader_share_desc">开启后，你发的每条消息都会附上当前屏幕的快照。默认关闭。</string>
+    <string name="screen_reader_recheck">我已在系统设置里开启</string>
+    <string name="vm_terminal_idle_timeout">已停止：连续 %1$s 分钟没有任何输出。</string>
+    <string name="vm_no_empty_projects">没有需要清理的空项目。</string>
+    <string name="vm_empty_projects_removed">已清理 %1$d 个空项目。</string>
+    <string name="st_clean_empty_projects">清理空项目</string>
+    <string name="st_clean_empty_projects_desc">删除所有没有消息、也没有文件的项目。</string>
+    <string name="plugins_show_less">收起</string>
 </resources>

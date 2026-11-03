@@ -101,6 +101,7 @@ class ClaudeRuntimeBridge(
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest>,
+        screenContext: String,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
@@ -170,7 +171,7 @@ class ClaudeRuntimeBridge(
 
             // Build a context-aware prompt that includes conversation history
             val guestWorkspacePath = "/workspace/$projectSlug"
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins)
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext)
 
             val command = buildList {
                 add(launch.executable)
@@ -685,7 +686,14 @@ class ClaudeRuntimeBridge(
             .take(600)
     }
 
-    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String, projectKind: ProjectKind, plugins: List<com.jarves.mh.model.PluginManifest>): String {
+    private fun buildContextPrompt(
+        currentPrompt: String,
+        history: List<ChatMessage>,
+        guestWorkspacePath: String,
+        projectKind: ProjectKind,
+        plugins: List<com.jarves.mh.model.PluginManifest>,
+        screenContext: String,
+    ): String {
         // Filter out the current prompt (last user message), system greeting, and any error messages
         val priorMessages = history
             .filter { msg ->
@@ -716,6 +724,11 @@ class ClaudeRuntimeBridge(
         sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
         sb.appendLine("</project_workspace>")
         sb.appendLine()
+        val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext)
+        if (screenSection.isNotBlank()) {
+            sb.append(screenSection)
+            sb.appendLine()
+        }
         val pluginSection = com.jarves.mh.model.PluginPrompt.section(plugins, guestWorkspacePath)
         if (pluginSection.isNotBlank()) {
             sb.append(pluginSection)

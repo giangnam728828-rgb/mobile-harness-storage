@@ -26,6 +26,12 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getBoolean("onboarding_complete", false)
         set(value) { preferences.edit().putBoolean("onboarding_complete", value).apply() }
 
+    /** When on, an agent session is allowed to read the current screen through the
+     *  accessibility service. Off by default: screen content can contain anything. */
+    var screenContextForAgent: Boolean
+        get() = preferences.getBoolean("screen_context_for_agent", false)
+        set(value) { preferences.edit().putBoolean("screen_context_for_agent", value).apply() }
+
     var runtimeSetupComplete: Boolean
         get() = preferences.getBoolean("runtime_setup_complete", false)
         set(value) { preferences.edit().putBoolean("runtime_setup_complete", value).apply() }

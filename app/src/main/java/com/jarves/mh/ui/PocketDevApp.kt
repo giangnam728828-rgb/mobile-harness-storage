@@ -2617,6 +2617,8 @@ private fun RootScreenHost(
                     onDeletePlugin = viewModel::deletePlugin,
                     onAddPlugin = { raw -> viewModel.addPlugin(raw) },
                     onRunPluginTool = { pluginId, toolId -> viewModel.runPluginTool(pluginId, toolId) },
+                    onShareScreenContext = viewModel::setScreenContextForAgent,
+                    onCleanEmptyProjects = viewModel::deleteEmptyProjects,
                 )
             }
         }

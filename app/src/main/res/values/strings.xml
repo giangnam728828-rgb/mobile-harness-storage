@@ -417,4 +417,13 @@
     <string name="plugins_timed_out">Timed out after %1$d s</string>
     <string name="plugins_run">Run</string>
     <string name="plugins_output_title">Last run</string>
+    <string name="screen_reader_share_title">Let the AI read this screen</string>
+    <string name="screen_reader_share_desc">When on, every message you send includes a snapshot of the current screen. Off by default.</string>
+    <string name="screen_reader_recheck">I turned it on in system settings</string>
+    <string name="vm_terminal_idle_timeout">Stopped after %1$s minutes without any output.</string>
+    <string name="vm_no_empty_projects">No empty projects to clean up.</string>
+    <string name="vm_empty_projects_removed">Removed %1$d empty project(s).</string>
+    <string name="st_clean_empty_projects">Clean up empty projects</string>
+    <string name="st_clean_empty_projects_desc">Remove every project with no messages and no files.</string>
+    <string name="plugins_show_less">Show less</string>
 </resources>

@@ -18,7 +18,9 @@ interface RuntimeBridge {
     val events: Flow<RuntimeEvent>
     /**
      * [plugins] carries the user's enabled plugin manifests so the agent can be told
-     * which extra commands are available. Defaulted so existing callers keep working.
+     * which extra commands are available. [screenContext] is the accessibility snapshot,
+     * empty unless the user opted into screen sharing. Both are defaulted so existing
+     * callers keep working.
      */
     suspend fun startSession(
         projectId: String,
@@ -28,6 +30,7 @@ interface RuntimeBridge {
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest> = emptyList(),
+        screenContext: String = "",
     ): String
 
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
