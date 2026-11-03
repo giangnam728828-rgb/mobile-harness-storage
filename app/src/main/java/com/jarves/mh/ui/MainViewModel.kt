@@ -704,6 +704,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     var offset = 0L
                     val streamed = StringBuilder()
                     var autoConfirmed = false
+                    // Rebuilding the whole live buffer for every 16 KiB chunk made this
+                    // loop copy the entire history ~20 times a second while the UI
+                    // recomposed just as often. Cap the repaint rate instead; the final
+                    // output below still flushes exactly once when the process ends.
+                    var lastLiveEmit = 0L
                     while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
                         val file = native?.outputFile
                         val available = (file?.length() ?: 0L) - offset
@@ -719,9 +724,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (count > 0) {
                             offset += count
                             streamed.append(bytes.decodeToString(0, count))
-                            _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
-                                .trimEnd()
-                                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                            val now = System.nanoTime()
+                            if (now - lastLiveEmit >= LIVE_OUTPUT_FRAME_NANOS) {
+                                lastLiveEmit = now
+                                _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
+                                    .trimEnd()
+                                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                            }
                             if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, streamed.toString())) {
                                 proc.outputStream.write("y\n".toByteArray())
                                 proc.outputStream.flush()
@@ -5421,6 +5430,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
+        private const val LIVE_OUTPUT_FRAME_NANOS = 120_000_000L
         private const val MAX_ANDROID_BUILD_LOG = 300_000
         private const val MAX_LOGCAT_LINES = 5_000
         private const val MEMORY_PRESSURE_TERMINAL_LINES = 20

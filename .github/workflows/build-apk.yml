@@ -15,7 +15,7 @@ concurrency:
 
 env:
   RELEASE_TAG: apk-latest
-  APK_ASSET: mobile-harness-storage-debug.apk
+  APK_ASSET: mobile-harness-storage.apk
   MANIFEST_ASSET: mobile-harness-update.json
 
 jobs:
@@ -85,7 +85,7 @@ jobs:
 
     # versionCode must strictly increase for the built-in updater to offer the
     # build, and it guarantees an install is never rejected as a downgrade.
-    - name: Build Online Debug APK
+    - name: Build Online Release APK
       env:
         MH_UPLOAD_STORE_FILE: ${{ github.workspace }}/dist/mh-upload.p12
         MH_UPLOAD_STORE_PASSWORD: ${{ secrets.MH_UPLOAD_STORE_PASSWORD }}
@@ -94,7 +94,7 @@ jobs:
         MH_UPLOAD_STORE_TYPE: PKCS12
       run: |
         chmod +x gradlew
-        ./gradlew assembleOnlineDebug --stacktrace \
+        ./gradlew assembleOnlineRelease --stacktrace \
           -PappVersionCode=$((10000 + GITHUB_RUN_NUMBER)) \
           -PappVersionName="1.0.10+build.${GITHUB_RUN_NUMBER}"
 
@@ -105,7 +105,7 @@ jobs:
         EXPECTED_CERT_SHA256: 6e9e57be2c4c9f2a15234f932f1153deb6076a894d2bae283ba44c3667f73975
       run: |
         set -euo pipefail
-        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        APK=$(ls app/build/outputs/apk/online/release/*.apk | head -1)
         SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
         APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)
         echo "APK: $APK"
@@ -127,7 +127,7 @@ jobs:
     - name: Verify embedded agent bundles
       run: |
         set -euo pipefail
-        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        APK=$(ls app/build/outputs/apk/online/release/*.apk | head -1)
         SIZE=$(unzip -l "$APK" | awk '/pocketdev-agy-arm64-2026\.09\.1\.tar\.zst/ {print $1; exit}')
         if [ -z "$SIZE" ]; then
           echo "::error::Antigravity bundle is missing from the APK; Antigravity would fail to install."
@@ -139,13 +139,13 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: mobile-harness-storage-${{ github.sha }}
-        path: app/build/outputs/apk/online/debug/*.apk
+        path: app/build/outputs/apk/online/release/*.apk
         retention-days: 30
 
     - name: Write update manifest
       run: |
         set -euo pipefail
-        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        APK=$(ls app/build/outputs/apk/online/release/*.apk | head -1)
         SHORT=$(git rev-parse --short=7 HEAD)
         VERSION_CODE=$((10000 + GITHUB_RUN_NUMBER))
         SHA256=$(sha256sum "$APK" | awk '{print $1}')
@@ -154,7 +154,7 @@ jobs:
         cp "$APK" "out/$APK_ASSET"
         # A per-commit filename makes it impossible to reinstall a stale cached
         # copy of an earlier build with a different signature.
-        cp "$APK" "out/mobile-harness-storage-debug-$SHORT.apk"
+        cp "$APK" "out/mobile-harness-storage-$SHORT.apk"
         cat > "out/$MANIFEST_ASSET" <<EOF
         {
           "versionCode": $VERSION_CODE,
@@ -189,7 +189,7 @@ jobs:
         gh release upload "$RELEASE_TAG" \
           "out/$APK_ASSET" \
           "out/$MANIFEST_ASSET" \
-          "out/mobile-harness-storage-debug-$SHORT.apk" \
+          "out/mobile-harness-storage-$SHORT.apk" \
           --clobber
 
     - name: Job summary

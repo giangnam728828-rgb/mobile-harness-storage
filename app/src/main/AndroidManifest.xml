@@ -11,7 +11,14 @@
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!--
+        MANAGE_EXTERNAL_STORAGE is deliberately not declared: the direct APK targets
+        SDK 28, where the platform ignores it, and it only existed to drive the
+        all-files-access settings detour on every launch. Legacy storage plus the two
+        runtime permissions above already give the PRoot runtime its /sdcard bind.
+        Re-add it (and raise targetSdk to 30+) only if the app ever moves to scoped
+        storage.
+    -->
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 

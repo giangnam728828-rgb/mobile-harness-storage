@@ -1,12 +1,15 @@
 package com.jarves.mh
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.content.ComponentCallbacks2
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -36,9 +39,11 @@ class MainActivity : ComponentActivity() {
     }
     private val mainViewModel: MainViewModel by viewModels()
 
+    private val storagePermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        checkAndRequestStoragePermission()
         enableEdgeToEdge()
         setContent {
             val vm = mainViewModel
@@ -64,6 +69,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Ask once the first frame is on screen, so the permission dialog never
+        // competes with window setup for the main thread.
+        window.decorView.post { ensureStorageAccess() }
     }
 
     @Suppress("DEPRECATION")
@@ -74,19 +82,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkAndRequestStoragePermission() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            if (!android.os.Environment.isExternalStorageManager()) {
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = android.net.Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    startActivity(intent)
-                }
-            }
+    /**
+     * The direct APK targets SDK 28, so the platform runs it in legacy storage mode:
+     * broad /sdcard access comes from READ/WRITE_EXTERNAL_STORAGE, which is a normal
+     * runtime permission. MANAGE_EXTERNAL_STORAGE is ignored below target SDK 30, so
+     * the old "jump to the all-files-access settings page" flow never granted
+     * anything — it only threw the user out of the app on every cold start.
+     */
+    private fun ensureStorageAccess() {
+        val wanted = buildList {
+            val read = Manifest.permission.READ_EXTERNAL_STORAGE
+            val write = Manifest.permission.WRITE_EXTERNAL_STORAGE
+            if (checkSelfPermission(read) != PackageManager.PERMISSION_GRANTED) add(read)
+            if (checkSelfPermission(write) != PackageManager.PERMISSION_GRANTED) add(write)
+        }
+        if (wanted.isNotEmpty()) {
+            storagePermissionLauncher.launch(wanted.toTypedArray())
         }
     }
 }
