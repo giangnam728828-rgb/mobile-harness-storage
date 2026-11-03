@@ -408,4 +408,13 @@
     <string name="plugins_install">Install</string>
     <string name="plugins_invalid">That JSON is not valid. Check the id and tools fields.</string>
     <string name="plugins_delete">Delete plugin</string>
+    <string name="plugins_more_tools">+%1$d more tools</string>
+    <string name="plugins_copy_commands">Copy commands</string>
+    <string name="plugins_commands_copied">Commands copied</string>
+    <string name="plugins_running">Running…</string>
+    <string name="plugins_no_output">(no output)</string>
+    <string name="plugins_exit_code">Exit code %1$d</string>
+    <string name="plugins_timed_out">Timed out after %1$d s</string>
+    <string name="plugins_run">Run</string>
+    <string name="plugins_output_title">Last run</string>
 </resources>

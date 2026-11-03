@@ -2616,6 +2616,7 @@ private fun RootScreenHost(
                     onTogglePlugin = viewModel::togglePlugin,
                     onDeletePlugin = viewModel::deletePlugin,
                     onAddPlugin = { raw -> viewModel.addPlugin(raw) },
+                    onRunPluginTool = { pluginId, toolId -> viewModel.runPluginTool(pluginId, toolId) },
                 )
             }
         }

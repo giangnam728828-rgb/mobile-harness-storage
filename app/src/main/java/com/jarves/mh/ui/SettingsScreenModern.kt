@@ -43,7 +43,9 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -83,6 +85,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -99,6 +102,7 @@ import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.access.ScreenReaderService
 import com.jarves.mh.model.PluginManifest
+import com.jarves.mh.model.PluginToolRisk
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
@@ -160,6 +164,7 @@ fun SettingsScreen(
     onTogglePlugin: (String) -> Unit = {},
     onDeletePlugin: (String) -> Unit = {},
     onAddPlugin: (String) -> Unit = {},
+    onRunPluginTool: (String, String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -318,6 +323,10 @@ fun SettingsScreen(
                         onToggle = onTogglePlugin,
                         onDelete = onDeletePlugin,
                         onAdd = onAddPlugin,
+                        onRun = onRunPluginTool,
+                        runningToolId = state.pluginRunToolId,
+                        runTitle = state.pluginRunTitle,
+                        runOutput = state.pluginRunOutput,
                     )
                 }
             }
@@ -718,12 +727,18 @@ private fun formatTransferEta(downloaded: Long, total: Long, bytesPerSecond: Lon
 }
 
 
+private const val MAX_VISIBLE_PLUGIN_TOOLS = 4
+
 @Composable
 private fun PluginsSection(
     plugins: List<PluginManifest>,
     onToggle: (String) -> Unit,
     onDelete: (String) -> Unit,
     onAdd: (String) -> Unit,
+    onRun: (String, String) -> Unit = { _, _ -> },
+    runningToolId: String? = null,
+    runTitle: String = "",
+    runOutput: String = "",
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -765,6 +780,72 @@ private fun PluginsSection(
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                plugin.tools.take(MAX_VISIBLE_PLUGIN_TOOLS).forEach { tool ->
+                                    val toolKey = "${plugin.id}/${tool.id}"
+                                    val isRunning = runningToolId == toolKey
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable(enabled = plugin.enabled && runningToolId == null) {
+                                                onRun(plugin.id, tool.id)
+                                            }
+                                            .padding(vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Default.PlayArrow,
+                                            contentDescription = stringResource(R.string.plugins_run),
+                                            modifier = Modifier.size(13.dp),
+                                            tint = if (plugin.enabled) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.outline
+                                            },
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(
+                                            if (isRunning) {
+                                                stringResource(R.string.plugins_running)
+                                            } else {
+                                                tool.name
+                                            },
+                                            fontSize = 11.sp,
+                                            color = when (tool.risk) {
+                                                PluginToolRisk.LOW -> PocketOrange
+                                                PluginToolRisk.MEDIUM -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                PluginToolRisk.HIGH -> MaterialTheme.colorScheme.error
+                                            },
+                                        )
+                                    }
+                                }
+                                if (plugin.toolCount > MAX_VISIBLE_PLUGIN_TOOLS) {
+                                    Text(
+                                        stringResource(
+                                            R.string.plugins_more_tools,
+                                            plugin.toolCount - MAX_VISIBLE_PLUGIN_TOOLS,
+                                        ),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    val body = plugin.tools.joinToString("\n") { it.command }
+                                    clipboard.setText(AnnotatedString(body))
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        context.getString(R.string.plugins_commands_copied),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    stringResource(R.string.plugins_copy_commands),
+                                    Modifier.size(18.dp),
+                                )
                             }
                             Switch(
                                 checked = plugin.enabled,
@@ -799,6 +880,32 @@ private fun PluginsSection(
                 },
             ) {
                 Text(stringResource(R.string.plugins_copy_template))
+            }
+        }
+
+        if (runOutput.isNotBlank()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    runTitle.ifBlank { stringResource(R.string.plugins_output_title) },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                ) {
+                    Text(
+                        runOutput,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(10.dp),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
+                }
             }
         }
 

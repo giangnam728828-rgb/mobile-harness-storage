@@ -297,6 +297,12 @@ data class AppUiState(
     val projects: List<Project> = emptyList(),
     /** Local, data-only plugin manifests the user installed. */
     val plugins: List<com.jarves.mh.model.PluginManifest> = emptyList(),
+    /** Tool currently executing from the plugin panel, as "pluginId/toolId". */
+    val pluginRunToolId: String? = null,
+    /** Human label of the last plugin tool run, shown above its output. */
+    val pluginRunTitle: String = "",
+    /** Captured output of the last plugin tool run. */
+    val pluginRunOutput: String = "",
     val projectImporting: Boolean = false,
     val projectImportMessage: String? = null,
     val gitCloneRunning: Boolean = false,
@@ -418,15 +424,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
 
-    init {
-        // Plugins are data-only and live in SharedPreferences, so they can be loaded
-        // synchronously before the first screen without touching the runtime.
-        val storedPlugins = preferences.loadPlugins()
-        if (storedPlugins.isNotEmpty()) {
-            _state.update { it.copy(plugins = storedPlugins) }
-        }
-    }
-
     // ─── Plugins ────────────────────────────────────────────────────
     fun togglePlugin(id: String) {
         val updated = _state.value.plugins.map {
@@ -440,6 +437,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updated = _state.value.plugins.filterNot { it.id == id }
         _state.update { it.copy(plugins = updated) }
         preferences.savePlugins(updated)
+    }
+
+    /**
+     * Runs one plugin tool and publishes its output into the plugin panel.
+     *
+     * The command runs through the same PRoot bridge as the built-in terminal, inside the
+     * active project workspace when there is one and inside the scratch terminal workspace
+     * otherwise, so a plugin can never reach outside what the user could type by hand.
+     */
+    fun runPluginTool(pluginId: String, toolId: String) {
+        if (_state.value.pluginRunToolId != null) return
+        val plugin = _state.value.plugins.firstOrNull { it.id == pluginId } ?: return
+        if (!plugin.enabled) return
+        val tool = plugin.tools.firstOrNull { it.id == toolId } ?: return
+
+        val project = _state.value.activeProject
+        val hostWorkspace = if (project != null) {
+            File(getApplication<Application>().filesDir, "workspaces/${project.id}")
+        } else {
+            File(getApplication<Application>().filesDir, "workspaces/terminal")
+        }
+        val guestWorkspace = if (project != null) "/workspace/${project.slug}" else "/workspace/terminal"
+        val rendered = com.jarves.mh.model.PluginManifest.renderCommand(tool.command, guestWorkspace, "")
+
+        _state.update {
+            it.copy(
+                pluginRunToolId = "$pluginId/$toolId",
+                pluginRunTitle = "${plugin.displayName} · ${tool.name}",
+                pluginRunOutput = str(R.string.plugins_running),
+            )
+        }
+        viewModelScope.launch {
+            val output = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (!installer.isInstalled()) {
+                        return@runCatching str(R.string.vm_linux_not_ready)
+                    }
+                    val runtime = installer.installedRuntime()
+                    hostWorkspace.mkdirs()
+                    val proc = installer.process(
+                        proot = runtime.proot,
+                        rootfs = runtime.rootfs,
+                        workspace = hostWorkspace,
+                        environment = emptyMap(),
+                        guestCommand = listOf("/usr/bin/bash", "-c", rendered),
+                    )
+                    val native = proc as? NativeSpawnProcess
+                    var offset = 0L
+                    val streamed = StringBuilder()
+                    val deadline = System.currentTimeMillis() + tool.timeoutSeconds * 1000L
+                    while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
+                        val file = native?.outputFile
+                        val available = (file?.length() ?: 0L) - offset
+                        if (file == null || available <= 0) {
+                            if (System.currentTimeMillis() > deadline) {
+                                runCatching { proc.destroyForcibly() }
+                                streamed.appendLine().append(str(R.string.plugins_timed_out, tool.timeoutSeconds))
+                                break
+                            }
+                            Thread.sleep(50)
+                            continue
+                        }
+                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                        val count = RandomAccessFile(file, "r").use { input ->
+                            input.seek(offset)
+                            input.read(bytes)
+                        }
+                        if (count > 0) {
+                            offset += count
+                            streamed.append(bytes.decodeToString(0, count))
+                        }
+                    }
+                    val exit = runCatching { proc.waitFor() }.getOrDefault(-1)
+                    runCatching { proc.outputStream.close() }
+                    val out = sanitizeTerminalOutput(streamed.toString()).trim()
+                    val body = if (out.isNotEmpty()) out else str(R.string.plugins_no_output)
+                    str(R.string.plugins_exit_code, exit) + "\n" + body
+                }.getOrElse { str(R.string.vm_error_with_message, it.message.orEmpty()) }
+            }
+            _state.update { it.copy(pluginRunToolId = null, pluginRunOutput = output) }
+        }
     }
 
     /** Installs a manifest pasted by the user; returns false when the JSON is unusable. */
@@ -562,6 +640,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        // Plugins are data-only and live in SharedPreferences, so they can be read
+        // synchronously once _state exists, without touching the runtime.
+        val storedPlugins = preferences.loadPlugins()
+        if (storedPlugins.isNotEmpty()) {
+            _state.update { it.copy(plugins = storedPlugins) }
+        }
         viewModelScope.launch {
             AndroidAppInstaller.events.collect { event ->
                 if (event.operationId != pendingAndroidInstallId) return@collect
@@ -4863,6 +4947,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     request.prompt,
                     request.history,
                     request.provider,
+                    _state.value.plugins,
                 )
             }
         }
@@ -5321,6 +5406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 request.prompt,
                 request.history,
                 request.provider,
+                _state.value.plugins,
             )
         }
         return true

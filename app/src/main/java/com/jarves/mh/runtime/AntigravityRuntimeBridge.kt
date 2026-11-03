@@ -317,6 +317,7 @@ class AntigravityRuntimeBridge(
         prompt: String,
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
+        plugins: List<com.jarves.mh.model.PluginManifest>,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         val sessionStartedAtMillis = System.currentTimeMillis()
@@ -356,9 +357,11 @@ class AntigravityRuntimeBridge(
             )
             activeProcess = process
             if (userStopRequested) process.destroy()
+            val antigravityPlugins = com.jarves.mh.model.PluginPrompt.section(plugins, "/workspace/$projectSlug")
+            val promptWithPlugins = if (antigravityPlugins.isBlank()) prompt else antigravityPlugins + "\n" + prompt
             val request = JSONObject()
                 .put("event", "user")
-                .put("message", JSONObject().put("content", antigravityWorkspacePrompt(projectSlug, prompt)))
+                .put("message", JSONObject().put("content", antigravityWorkspacePrompt(projectSlug, promptWithPlugins)))
                 .toString() + "\n"
             process.outputStream.write(request.toByteArray())
             process.outputStream.flush()
