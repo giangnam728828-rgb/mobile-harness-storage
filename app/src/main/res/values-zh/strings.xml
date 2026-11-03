@@ -229,4 +229,20 @@
     <string name="st_clean_empty_projects">清理空项目</string>
     <string name="st_clean_empty_projects_desc">删除所有没有消息、也没有文件的项目。</string>
     <string name="plugins_show_less">收起</string>
+    <string name="screen_control_title">AI 操作屏幕</string>
+    <string name="screen_control_subtitle_off">已关闭</string>
+    <string name="screen_control_subtitle_on">已开启 · 每个动作都要你确认</string>
+    <string name="screen_control_master">允许 AI 操作屏幕</string>
+    <string name="screen_control_master_desc">AI 可以点击、滑动、输入文字和按键——但每一次都必须你点同意才会执行。</string>
+    <string name="screen_control_max_actions">单次会话动作上限</string>
+    <string name="screen_control_blocklist">禁止操作的应用</string>
+    <string name="screen_control_blocklist_desc">应用包名包含这些关键词的，一律拒绝自动操作。</string>
+    <string name="screen_control_add_block">添加一个关键词</string>
+    <string name="screen_control_block_added">已加入禁止名单</string>
+    <string name="screen_control_usage">可以告诉 AI 使用：</string>
+    <string name="screen_control_approve">允许</string>
+    <string name="screen_control_deny">拒绝</string>
+    <string name="screen_control_request_title">AI 想操作你的屏幕</string>
+    <string name="screen_control_request_app">目标应用：%1$s</string>
+    <string name="screen_control_needs_service">请先开启读屏服务。</string>
 </resources>

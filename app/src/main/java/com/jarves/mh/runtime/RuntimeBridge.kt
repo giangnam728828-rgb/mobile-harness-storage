@@ -31,6 +31,7 @@ interface RuntimeBridge {
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest> = emptyList(),
         screenContext: String = "",
+        screenControlEnabled: Boolean = false,
     ): String
 
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)

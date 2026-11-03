@@ -68,6 +68,7 @@ class DshRuntimeBridge(
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest>,
         screenContext: String,
+        screenControlEnabled: Boolean,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
@@ -137,7 +138,7 @@ class DshRuntimeBridge(
             if (route.keyEnv != FALLBACK_KEY_ENV) environment.remove(FALLBACK_KEY_ENV)
 
             val guestWorkspacePath = "/workspace/$projectSlug"
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext)
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext, screenControlEnabled)
             val command = listOf("/usr/local/bin/dsh", "--profile", "sdk")
             Log.d("DshBridge", "Route: ${route.name}, Model: ${provider.model}")
             val process = installer.process(
@@ -582,6 +583,7 @@ class DshRuntimeBridge(
         projectKind: ProjectKind,
         plugins: List<com.jarves.mh.model.PluginManifest>,
         screenContext: String,
+        screenControlEnabled: Boolean,
     ): String {
         val priorMessages = history
             .filter { msg ->
@@ -619,6 +621,11 @@ class DshRuntimeBridge(
         val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext)
         if (screenSection.isNotBlank()) {
             sb.append(screenSection)
+            sb.appendLine()
+        }
+        val controlSection = com.jarves.mh.model.ScreenControlPrompt.section(screenControlEnabled)
+        if (controlSection.isNotBlank()) {
+            sb.append(controlSection)
             sb.appendLine()
         }
         val pluginSection = com.jarves.mh.model.PluginPrompt.section(plugins, guestWorkspacePath)

@@ -102,6 +102,7 @@ class ClaudeRuntimeBridge(
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest>,
         screenContext: String,
+        screenControlEnabled: Boolean,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
@@ -171,7 +172,7 @@ class ClaudeRuntimeBridge(
 
             // Build a context-aware prompt that includes conversation history
             val guestWorkspacePath = "/workspace/$projectSlug"
-            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext)
+            val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind, plugins, screenContext, screenControlEnabled)
 
             val command = buildList {
                 add(launch.executable)
@@ -693,6 +694,7 @@ class ClaudeRuntimeBridge(
         projectKind: ProjectKind,
         plugins: List<com.jarves.mh.model.PluginManifest>,
         screenContext: String,
+        screenControlEnabled: Boolean,
     ): String {
         // Filter out the current prompt (last user message), system greeting, and any error messages
         val priorMessages = history
@@ -727,6 +729,11 @@ class ClaudeRuntimeBridge(
         val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext)
         if (screenSection.isNotBlank()) {
             sb.append(screenSection)
+            sb.appendLine()
+        }
+        val controlSection = com.jarves.mh.model.ScreenControlPrompt.section(screenControlEnabled)
+        if (controlSection.isNotBlank()) {
+            sb.append(controlSection)
             sb.appendLine()
         }
         val pluginSection = com.jarves.mh.model.PluginPrompt.section(plugins, guestWorkspacePath)

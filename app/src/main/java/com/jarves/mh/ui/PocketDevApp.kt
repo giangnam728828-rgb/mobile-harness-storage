@@ -2619,10 +2619,46 @@ private fun RootScreenHost(
                     onRunPluginTool = { pluginId, toolId -> viewModel.runPluginTool(pluginId, toolId) },
                     onShareScreenContext = viewModel::setScreenContextForAgent,
                     onCleanEmptyProjects = viewModel::deleteEmptyProjects,
+                    onShareScreenControl = viewModel::setScreenControlEnabled,
+                    onAddScreenBlock = viewModel::addScreenBlocklistEntry,
+                    onRemoveScreenBlock = viewModel::removeScreenBlocklistEntry,
+                    onScreenBlocklist = viewModel::screenExtraBlocklist,
                 )
             }
         }
     }
+    state.pendingScreenAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { viewModel.rejectScreenAction() },
+            title = { Text(stringResource(R.string.screen_control_request_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(action.describe(), fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    if (action.reason.isNotBlank()) {
+                        Text(action.reason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (state.pendingScreenActionApp.isNotBlank()) {
+                        Text(
+                            stringResource(R.string.screen_control_request_app, state.pendingScreenActionApp),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.approveScreenAction() }) {
+                    Text(stringResource(R.string.screen_control_approve))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.rejectScreenAction() }) {
+                    Text(stringResource(R.string.screen_control_deny))
+                }
+            },
+        )
+    }
+
     if (showQuickTerminal) {
         QuickTerminalSheet(
             onDismiss = { showQuickTerminal = false },

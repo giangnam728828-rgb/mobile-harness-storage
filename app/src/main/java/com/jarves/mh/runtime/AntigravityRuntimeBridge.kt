@@ -319,6 +319,7 @@ class AntigravityRuntimeBridge(
         provider: ProviderProfile,
         plugins: List<com.jarves.mh.model.PluginManifest>,
         screenContext: String,
+        screenControlEnabled: Boolean,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         val sessionStartedAtMillis = System.currentTimeMillis()
@@ -358,7 +359,8 @@ class AntigravityRuntimeBridge(
             )
             activeProcess = process
             if (userStopRequested) process.destroy()
-            val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext)
+            val screenSection = com.jarves.mh.model.ScreenContextPrompt.section(true, screenContext) +
+                com.jarves.mh.model.ScreenControlPrompt.section(screenControlEnabled)
             val antigravityPlugins = com.jarves.mh.model.PluginPrompt.section(plugins, "/workspace/$projectSlug")
             val extras = buildString {
                 if (screenSection.isNotBlank()) append(screenSection).append('\n')

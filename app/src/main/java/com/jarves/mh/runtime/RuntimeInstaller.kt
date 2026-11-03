@@ -237,6 +237,9 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
         }
+        // The screen-control bridge is a small script the agent calls to ask for taps; it
+        // has to exist inside the guest for that flow to work at all.
+        runCatching { com.jarves.mh.access.ScreenBridgeInstaller.install(rootfs) }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
     }

@@ -41,6 +41,39 @@ object ScreenContextPrompt {
  * terminal tool. That keeps every execution inside the existing approval flow — the
  * agent still has to request the command, and the user still sees and approves it.
  */
+/**
+ * Tells the agent how to ask for screen actions.
+ *
+ * Only rendered when the user turned on screen control. The instructions are explicit that
+ * `mh-screen` blocks on the user's answer, because an agent that assumes a tap succeeded
+ * will cascade into wrong actions.
+ */
+object ScreenControlPrompt {
+
+    fun section(enabled: Boolean): String {
+        if (!enabled) return ""
+        return buildString {
+            appendLine("<screen_control>")
+            appendLine("The user allowed you to operate the screen. The command `mh-screen` is installed in this runtime.")
+            appendLine("It blocks until the user confirms or refuses, then prints JSON with a \"status\" field:")
+            appendLine("  OK, DENIED, BLOCKED, FAILED or TIMEOUT, followed by \"snapshot\": the screen text after the action.")
+            appendLine("Usage:")
+            appendLine("  mh-screen tap <x> <y> [reason]")
+            appendLine("  mh-screen swipe <x1> <y1> <x2> <y2> [durationMs]")
+            appendLine("  mh-screen type <text>")
+            appendLine("  mh-screen back | home | recents | scroll-forward | scroll-backward")
+            appendLine("  mh-screen wait <ms>")
+            appendLine("Rules you must follow:")
+            appendLine("- Read the coordinates from the screen snapshot the user shared; never guess them.")
+            appendLine("- Run one action at a time and read its snapshot before deciding the next one.")
+            appendLine("- A DENIED or BLOCKED result means stop and ask the user what to do; do not retry the same action.")
+            appendLine("- Banking, payment and wallet apps are refused by the app itself. Do not try to work around that.")
+            appendLine("- Never type passwords or payment details, even if the user asks you to tap into such a screen.")
+            appendLine("</screen_control>")
+        }
+    }
+}
+
 object PluginPrompt {
 
     /** Risk labels are shown verbatim so the agent can weigh how carefully to proceed. */

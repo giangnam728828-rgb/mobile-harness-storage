@@ -26,6 +26,24 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getBoolean("onboarding_complete", false)
         set(value) { preferences.edit().putBoolean("onboarding_complete", value).apply() }
 
+    /** Master switch for letting an agent actually operate the screen. Off by default. */
+    var screenControlEnabled: Boolean
+        get() = preferences.getBoolean("screen_control_enabled", false)
+        set(value) { preferences.edit().putBoolean("screen_control_enabled", value).apply() }
+
+    /** Per-session cap on automated actions, so a runaway agent cannot tap forever. */
+    var screenControlMaxActions: Int
+        get() = preferences.getInt("screen_control_max_actions", 50)
+        set(value) { preferences.edit().putInt("screen_control_max_actions", value).apply() }
+
+    /** Extra package fragments the user added on top of the built-in blocklist. */
+    var screenControlExtraBlocklist: List<String>
+        get() = preferences.getStringSet("screen_control_blocklist", emptySet())
+            ?.filter { it.isNotBlank() }
+            ?.sorted()
+            ?: emptyList()
+        set(value) { preferences.edit().putStringSet("screen_control_blocklist", value.toSet()).apply() }
+
     /** When on, an agent session is allowed to read the current screen through the
      *  accessibility service. Off by default: screen content can contain anything. */
     var screenContextForAgent: Boolean

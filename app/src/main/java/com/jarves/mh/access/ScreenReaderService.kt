@@ -29,6 +29,7 @@ class ScreenReaderService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         connected.value = true
+        ScreenController.service = this
         refreshNow()
     }
 
@@ -47,6 +48,7 @@ class ScreenReaderService : AccessibilityService() {
 
     override fun onDestroy() {
         connected.value = false
+        if (ScreenController.service === this) ScreenController.service = null
         super.onDestroy()
     }
 

@@ -112,6 +112,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -305,6 +307,14 @@ data class AppUiState(
     val pluginRunOutput: String = "",
     /** Whether an agent session may read the current screen. */
     val screenContextForAgent: Boolean = false,
+    /** Whether an agent may actually operate the screen after per-action approval. */
+    val screenControlEnabled: Boolean = false,
+    /** The action the agent asked for and the user has not answered yet. */
+    val pendingScreenAction: com.jarves.mh.model.ScreenActionRequest? = null,
+    /** Human label of the app the pending action would touch, for the dialog. */
+    val pendingScreenActionApp: String = "",
+    /** Why the last request was refused before it ever reached the dialog. */
+    val screenActionNotice: String? = null,
     val projectImporting: Boolean = false,
     val projectImportMessage: String? = null,
     val gitCloneRunning: Boolean = false,
@@ -522,6 +532,154 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ─── Screen control ─────────────────────────────────────────────
+    private var screenWatchJob: Job? = null
+    private var screenActionsThisSession = 0
+
+    fun setScreenControlEnabled(enabled: Boolean) {
+        preferences.screenControlEnabled = enabled
+        if (!enabled) screenActionsThisSession = 0
+        _state.update { it.copy(screenControlEnabled = enabled) }
+        if (enabled) startScreenActionWatch() else stopScreenActionWatch()
+    }
+
+    fun setScreenControlMaxActions(value: Int) {
+        preferences.screenControlMaxActions = value.coerceIn(1, 500)
+    }
+
+    fun addScreenBlocklistEntry(entry: String) {
+        val clean = entry.trim()
+        if (clean.isBlank()) return
+        val current = preferences.screenControlExtraBlocklist
+        if (current.any { it.equals(clean, ignoreCase = true) }) return
+        preferences.screenControlExtraBlocklist = current + clean
+        _state.update { it.copy(screenActionNotice = "已加入禁止名单：$clean") }
+    }
+
+    fun removeScreenBlocklistEntry(entry: String) {
+        preferences.screenControlExtraBlocklist = preferences.screenControlExtraBlocklist - entry
+    }
+
+    /** Only the user's own additions; the built-in list is shown separately in settings. */
+    fun screenExtraBlocklist(): List<String> = preferences.screenControlExtraBlocklist
+
+    fun screenBlocklist(): List<String> =
+        (com.jarves.mh.access.ScreenControlPolicy.DEFAULT_BLOCKLIST +
+            preferences.screenControlExtraBlocklist).distinct()
+
+    private fun startScreenActionWatch() {
+        if (screenWatchJob?.isActive == true) return
+        screenWatchJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(600)
+                if (!_state.value.screenControlEnabled) continue
+                if (_state.value.pendingScreenAction != null) continue
+                val project = _state.value.activeProject ?: continue
+                if (_state.value.pluginRunToolId != null) continue
+                val workspace = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
+                if (!workspace.isDirectory) continue
+                com.jarves.mh.access.ScreenActionFiles.pruneResults(workspace)
+                val pending = com.jarves.mh.access.ScreenActionFiles.readPending(workspace).firstOrNull()
+                    ?: continue
+                val (file, request) = pending
+                offerScreenAction(project, workspace, file, request)
+            }
+        }
+    }
+
+    private fun stopScreenActionWatch() {
+        screenWatchJob?.cancel()
+        screenWatchJob = null
+        _state.update { it.copy(pendingScreenAction = null) }
+    }
+
+    private fun offerScreenAction(
+        project: Project,
+        workspace: File,
+        file: File,
+        request: com.jarves.mh.model.ScreenActionRequest,
+    ) {
+        val currentPackage = com.jarves.mh.access.ScreenController.currentPackage()
+        val verdict = com.jarves.mh.access.ScreenControlPolicy.check(
+            request = request,
+            currentPackage = currentPackage,
+            blocklist = screenBlocklist(),
+            maxActionsPerSession = preferences.screenControlMaxActions,
+            actionsThisSession = screenActionsThisSession,
+        )
+        when (verdict) {
+            is com.jarves.mh.access.ScreenControlPolicy.Verdict.Blocked -> {
+                com.jarves.mh.access.ScreenActionFiles.writeResult(
+                    workspace,
+                    com.jarves.mh.model.ScreenActionResult(
+                        request.id,
+                        com.jarves.mh.model.ScreenActionStatus.BLOCKED,
+                        verdict.reason,
+                    ),
+                )
+                com.jarves.mh.access.ScreenActionFiles.consume(file)
+                _state.update { it.copy(screenActionNotice = verdict.reason) }
+            }
+            com.jarves.mh.access.ScreenControlPolicy.Verdict.Allowed -> {
+                pendingScreenActionFile = file
+                pendingScreenActionWorkspace = workspace
+                _state.update {
+                    it.copy(
+                        pendingScreenAction = request,
+                        pendingScreenActionApp = currentPackage.orEmpty(),
+                    )
+                }
+            }
+        }
+    }
+
+    private var pendingScreenActionFile: File? = null
+    private var pendingScreenActionWorkspace: File? = null
+
+    fun approveScreenAction() {
+        val request = _state.value.pendingScreenAction ?: return
+        val workspace = pendingScreenActionWorkspace
+        val file = pendingScreenActionFile
+        _state.update { it.copy(pendingScreenAction = null) }
+        pendingScreenActionFile = null
+        pendingScreenActionWorkspace = null
+        if (workspace == null || file == null) return
+        screenActionsThisSession += 1
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = com.jarves.mh.access.ScreenControlPolicy.execute(
+                request = request,
+                approved = true,
+                blockReason = null,
+            )
+            com.jarves.mh.access.ScreenActionFiles.writeResult(workspace, result)
+            com.jarves.mh.access.ScreenActionFiles.consume(file)
+        }
+    }
+
+    fun rejectScreenAction() {
+        val request = _state.value.pendingScreenAction ?: return
+        val workspace = pendingScreenActionWorkspace
+        val file = pendingScreenActionFile
+        _state.update { it.copy(pendingScreenAction = null) }
+        pendingScreenActionFile = null
+        pendingScreenActionWorkspace = null
+        if (workspace == null || file == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = com.jarves.mh.access.ScreenControlPolicy.execute(
+                request = request,
+                approved = false,
+                blockReason = null,
+            )
+            com.jarves.mh.access.ScreenActionFiles.writeResult(workspace, result)
+            com.jarves.mh.access.ScreenActionFiles.consume(file)
+        }
+    }
+
+    fun clearScreenActionNotice() {
+        if (_state.value.screenActionNotice == null) return
+        _state.update { it.copy(screenActionNotice = null) }
+    }
+
     /**
      * Screen snapshot to attach to a new session, or an empty string when the user has not
      * opted in or the accessibility service is not running.
@@ -669,8 +827,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 plugins = storedPlugins,
                 screenContextForAgent = preferences.screenContextForAgent,
+                screenControlEnabled = preferences.screenControlEnabled,
             )
         }
+        startScreenActionWatch()
         viewModelScope.launch {
             AndroidAppInstaller.events.collect { event ->
                 if (event.operationId != pendingAndroidInstallId) return@collect
@@ -5040,6 +5200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     request.provider,
                     _state.value.plugins,
                     currentScreenContext(),
+                    _state.value.screenControlEnabled,
                 )
             }
         }
@@ -5500,6 +5661,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 request.provider,
                 _state.value.plugins,
                 currentScreenContext(),
+                _state.value.screenControlEnabled,
             )
         }
         return true

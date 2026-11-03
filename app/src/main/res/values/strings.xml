@@ -426,4 +426,20 @@
     <string name="st_clean_empty_projects">Clean up empty projects</string>
     <string name="st_clean_empty_projects_desc">Remove every project with no messages and no files.</string>
     <string name="plugins_show_less">Show less</string>
+    <string name="screen_control_title">AI screen control</string>
+    <string name="screen_control_subtitle_off">Off</string>
+    <string name="screen_control_subtitle_on">On · asks before every action</string>
+    <string name="screen_control_master">Let the AI operate the screen</string>
+    <string name="screen_control_master_desc">The AI can tap, swipe, type and press keys — but only after you confirm each single action.</string>
+    <string name="screen_control_max_actions">Action limit per session</string>
+    <string name="screen_control_blocklist">Blocked apps</string>
+    <string name="screen_control_blocklist_desc">Matching package names never accept automated input.</string>
+    <string name="screen_control_add_block">Add a keyword</string>
+    <string name="screen_control_block_added">Added to the blocklist</string>
+    <string name="screen_control_usage">Tell the AI it may use: </string>
+    <string name="screen_control_approve">Allow</string>
+    <string name="screen_control_deny">Refuse</string>
+    <string name="screen_control_request_title">The AI wants to act on your screen</string>
+    <string name="screen_control_request_app">Target app: %1$s</string>
+    <string name="screen_control_needs_service">Turn on the screen reader first.</string>
 </resources>

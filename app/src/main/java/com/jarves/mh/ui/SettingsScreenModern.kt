@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -124,7 +125,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, PLUGINS, SCREEN_READER, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, PLUGINS, SCREEN_READER, SCREEN_CONTROL, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -168,6 +169,10 @@ fun SettingsScreen(
     onRunPluginTool: (String, String) -> Unit = { _, _ -> },
     onShareScreenContext: (Boolean) -> Unit = {},
     onCleanEmptyProjects: () -> Unit = {},
+    onShareScreenControl: (Boolean) -> Unit = {},
+    onAddScreenBlock: (String) -> Unit = {},
+    onRemoveScreenBlock: (String) -> Unit = {},
+    onScreenBlocklist: () -> List<String> = { emptyList() },
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -350,6 +355,28 @@ fun SettingsScreen(
                     ScreenReaderSection(
                         shareWithAgent = state.screenContextForAgent,
                         onShareWithAgent = onShareScreenContext,
+                    )
+                }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = stringResource(R.string.screen_control_title),
+                    subtitle = if (state.screenControlEnabled) {
+                        stringResource(R.string.screen_control_subtitle_on)
+                    } else {
+                        stringResource(R.string.screen_control_subtitle_off)
+                    },
+                    icon = Icons.Default.TouchApp,
+                    expanded = expanded == SettingsSection.SCREEN_CONTROL,
+                    onClick = { toggle(SettingsSection.SCREEN_CONTROL) },
+                ) {
+                    ScreenControlSection(
+                        state = state,
+                        onToggleMaster = onShareScreenControl,
+                        onAddBlock = onAddScreenBlock,
+                        onRemoveBlock = onRemoveScreenBlock,
+                        blocklist = onScreenBlocklist(),
                     )
                 }
             }
@@ -978,6 +1005,124 @@ private fun PluginsSection(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(stringResource(R.string.plugins_install))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreenControlSection(
+    state: AppUiState,
+    onToggleMaster: (Boolean) -> Unit,
+    onAddBlock: (String) -> Unit,
+    onRemoveBlock: (String) -> Unit,
+    blocklist: List<String>,
+) {
+    val context = LocalContext.current
+    val serviceOn = ScreenReaderService.isEnabled(context)
+    var newBlock by rememberSaveable { mutableStateOf("") }
+    var showAdd by rememberSaveable { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            stringResource(R.string.screen_control_master_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 13.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.screen_control_master), fontWeight = FontWeight.Medium)
+                    if (!serviceOn) {
+                        Text(
+                            stringResource(R.string.screen_control_needs_service),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                Switch(
+                    checked = state.screenControlEnabled && serviceOn,
+                    enabled = serviceOn,
+                    onCheckedChange = onToggleMaster,
+                )
+            }
+        }
+
+        Text(
+            stringResource(R.string.screen_control_usage) + com.jarves.mh.access.ScreenBridgeInstaller.USAGE_HINT,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Text(
+            stringResource(R.string.screen_control_blocklist),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+        )
+        Text(
+            stringResource(R.string.screen_control_blocklist_desc),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        com.jarves.mh.access.ScreenControlPolicy.DEFAULT_BLOCKLIST.chunked(4).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { tag ->
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Text(tag, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                }
+            }
+        }
+
+        if (blocklist.isNotEmpty()) {
+            blocklist.forEach { entry ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(entry, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { onRemoveBlock(entry) }) {
+                        Icon(
+                            Icons.Default.DeleteSweep,
+                            stringResource(R.string.action_remove),
+                            Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        OutlinedButton(onClick = { showAdd = !showAdd }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (showAdd) stringResource(R.string.action_cancel) else stringResource(R.string.screen_control_add_block))
+        }
+        AnimatedVisibility(showAdd) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    newBlock,
+                    { newBlock = it },
+                    label = { Text(stringResource(R.string.screen_control_add_block)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        onAddBlock(newBlock)
+                        newBlock = ""
+                        showAdd = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.screen_control_approve))
                 }
             }
         }
