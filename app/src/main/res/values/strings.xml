@@ -442,4 +442,8 @@
     <string name="screen_control_request_title">The AI wants to act on your screen</string>
     <string name="screen_control_request_app">Target app: %1$s</string>
     <string name="screen_control_needs_service">Turn on the screen reader first.</string>
+    <string name="plugins_howto_1">1. Tap "Copy template" — you get a sample written to the clipboard.</string>
+    <string name="plugins_howto_2">2. Change id, displayName and the commands to whatever you want.</string>
+    <string name="plugins_howto_3">3. Paste it into the box and tap Install. It shows up here and the AI can use it.</string>
+    <string name="plugins_howto_4">In a command: {{workspace}} is the project folder.</string>
 </resources>

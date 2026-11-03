@@ -935,6 +935,28 @@ private fun PluginsSection(
             }
         }
 
+        // Three short lines beat a paragraph here: the format is the confusing part, not the
+        // concept, so say exactly where to start and where each value goes.
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(stringResource(R.string.plugins_howto_1), fontSize = 12.sp)
+                Text(stringResource(R.string.plugins_howto_2), fontSize = 12.sp)
+                Text(stringResource(R.string.plugins_howto_3), fontSize = 12.sp)
+                Text(
+                    stringResource(R.string.plugins_howto_4),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { adding = !adding }, modifier = Modifier.weight(1f)) {
                 Text(if (adding) stringResource(R.string.action_cancel) else stringResource(R.string.plugins_add))

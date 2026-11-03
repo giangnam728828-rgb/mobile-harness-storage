@@ -131,22 +131,34 @@ data class PluginManifest(
             put("id", "my-first-plugin")
             put("displayName", "我的第一个插件")
             put("version", "1.0.0")
-            put("description", "示例：给项目跑一次 git status")
+            put("description", "示例：查看项目文件、跑一次 git status")
             put("author", "")
             put("enabled", true)
             put(
                 "tools",
-                JSONArray().put(
-                    JSONObject().apply {
-                        put("id", "git-status")
-                        put("name", "Git 状态")
-                        put("description", "在项目工作区执行 git status")
-                        put("kind", "COMMAND")
-                        put("command", "cd {{workspace}} && git status")
-                        put("risk", "LOW")
-                        put("timeoutSeconds", 60)
-                    },
-                ),
+                JSONArray()
+                    .put(
+                        JSONObject().apply {
+                            put("id", "list-files")
+                            put("name", "列出项目文件")
+                            put("description", "显示当前项目里的文件，最多 50 行")
+                            put("kind", "COMMAND")
+                            put("command", "ls -la {{workspace}} | head -50")
+                            put("risk", "LOW")
+                            put("timeoutSeconds", 30)
+                        },
+                    )
+                    .put(
+                        JSONObject().apply {
+                            put("id", "git-status")
+                            put("name", "Git 状态")
+                            put("description", "查看当前项目有哪些改动")
+                            put("kind", "COMMAND")
+                            put("command", "cd {{workspace}} && git status")
+                            put("risk", "LOW")
+                            put("timeoutSeconds", 60)
+                        },
+                    ),
             )
         }.toString(2)
 
