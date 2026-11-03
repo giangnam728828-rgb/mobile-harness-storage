@@ -66,7 +66,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -102,7 +101,6 @@ import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.defaultDshApiForProvider
-import com.jarves.mh.model.detectProviderForAgent
 import com.jarves.mh.model.inferredDshApiForUrl
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.network.ConnectionValidation
@@ -1040,62 +1038,15 @@ fun AgentScreen(
                             status = null
                             statusProviderMessage = null
                         },
-                        onBaseUrl = { url ->
-                            baseUrl = url
-                            // Live protocol hint only. We deliberately do not switch the
-                            // provider kind on every keystroke: that would lock the URL
-                            // field for fixed providers and can trap the user mid-typing.
-                            // Tapping "auto-detect" switches the provider instead.
-                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
-                                dshApi = inferredDshApiForUrl(url)
+                        onBaseUrl = {
+                            baseUrl = it
+                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind == ProviderKind.CUSTOM) {
+                                dshApi = inferredDshApiForUrl(it)
                             }
                             models = emptyList()
                             status = null
                             statusProviderMessage = null
                             keyConnectionStatuses = emptyMap()
-                        },
-                        onDetectProvider = {
-                            // One-tap auto-detect: infer the provider kind from the pasted
-                            // URL and apply its endpoint, model, protocol and saved key.
-                            val detected = detectProviderForAgent(state.agentKind, baseUrl)
-                            if (detected != null) {
-                                val typedUrl = baseUrl.trim()
-                                selectedKind = detected
-                                baseUrl = if (detected.fixedBaseUrl) {
-                                    detected.defaultBaseUrl
-                                } else {
-                                    typedUrl.ifBlank { detected.defaultBaseUrl }
-                                }
-                                // Custom gateways have no default model; keep whatever
-                                // the user already typed instead of blanking the field.
-                                if (detected.defaultModel.isNotBlank()) model = detected.defaultModel
-                                // For dsh, prefer the protocol implied by the URL itself:
-                                // a Gemini/OpenAI-compatible gateway must not be treated
-                                // as Anthropic just because CUSTOM defaults to it.
-                                dshApi = if (
-                                    state.agentKind == AgentKind.DEEPSEEK_HARNESS &&
-                                    detected in DSH_PROTOCOL_PROVIDERS
-                                ) {
-                                    inferredDshApiForUrl(baseUrl)
-                                } else {
-                                    defaultDshApiForProvider(detected)
-                                }
-                                openRouterProviderOrder = ""
-                                openRouterAllowFallbacks = true
-                                apiKey = getSavedApiKey(detected)
-                                savedKeys = getSavedApiKeys(detected)
-                                models = emptyList()
-                                modelSearch = ""
-                                newKeyName = ""
-                                newApiKey = ""
-                                keyConnectionStatuses = emptyMap()
-                                statusProviderMessage = null
-                                status = context.getString(
-                                    R.string.provider_detected_as,
-                                    context.getString(detected.titleRes()),
-                                )
-                                statusOk = true
-                            }
                         },
                         onModel = { model = it; status = null; statusProviderMessage = null; keyConnectionStatuses = emptyMap() },
                         onDshApi = { dshApi = it; status = null; statusProviderMessage = null; keyConnectionStatuses = emptyMap() },
@@ -1585,7 +1536,6 @@ private fun AgentProviderCard(
     newKeyVisible: Boolean,
     onProvider: (ProviderKind) -> Unit,
     onBaseUrl: (String) -> Unit,
-    onDetectProvider: () -> Unit,
     onModel: (String) -> Unit,
     onDshApi: (String) -> Unit,
     onOpenRouterProviderOrder: (String) -> Unit,
@@ -1703,28 +1653,12 @@ private fun AgentProviderCard(
                             value = baseUrl,
                             onValueChange = { if (!selectedKind.fixedBaseUrl) onBaseUrl(it) },
                             label = { Text(stringResource(R.string.provider_base_url)) },
-                            supportingText = when {
-                                selectedKind.fixedBaseUrl -> ({ Text(stringResource(R.string.provider_fixed_by, stringResource(selectedKind.titleRes()))) })
-                                else -> ({
-                                    Text(stringResource(R.string.provider_auto_detect_hint), fontSize = 11.sp)
-                                })
-                            },
+                            supportingText = if (selectedKind.fixedBaseUrl) ({ Text(stringResource(R.string.provider_fixed_by, stringResource(selectedKind.titleRes()))) }) else null,
                             readOnly = selectedKind.fixedBaseUrl,
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                         )
-                        if (!selectedKind.fixedBaseUrl) {
-                            TextButton(
-                                onClick = onDetectProvider,
-                                enabled = baseUrl.isNotBlank(),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(stringResource(R.string.provider_auto_detect_action), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
                         if (selectedKind == ProviderKind.LLM_ROUTER) {
                             OutlinedTextField(
                                 value = openRouterProviderOrder,

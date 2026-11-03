@@ -105,68 +105,16 @@ fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
 }
 
 /**
- * Best-effort protocol choice for a user-entered gateway URL.
+ * Best-effort protocol choice for a user-entered custom gateway URL.
  * The picker remains editable because a URL alone cannot prove a gateway's wire format.
- *
- * Handles the common shapes: Anthropic-compatible (`/anthropic`), OpenAI-compatible
- * (`/v1`, `/openai`, `/chat/completions` — includes Gemini's OpenAI-compatible
- * `generativelanguage.googleapis.com/v1beta/openai` endpoint) and Responses API
- * (`/responses`).
  */
 fun inferredDshApiForUrl(baseUrl: String): String {
     val normalized = baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT)
     return when {
-        normalized.isEmpty() -> "anthropic-messages"
         normalized.endsWith("/responses") -> "openai-responses"
         "/anthropic" in normalized || "api.anthropic.com" in normalized -> "anthropic-messages"
-        "/openai" in normalized || "/chat/completions" in normalized -> "openai-completions"
         normalized.endsWith("/v1") -> "openai-completions"
         else -> "anthropic-messages"
-    }
-}
-
-/** Extracts a lowercase host (no scheme, port or `www.`) from a pasted URL, or "" when absent. */
-private fun hostOf(baseUrl: String): String {
-    val trimmed = baseUrl.trim().trimEnd('/').lowercase(Locale.ROOT)
-    val withoutScheme = trimmed.substringAfter("://", trimmed)
-    return withoutScheme.substringBefore('/').substringBefore(':').removePrefix("www.")
-}
-
-/**
- * Best-effort provider kind for a pasted gateway URL, so users can just paste an
- * endpoint + key and let the app wire up the right provider automatically.
- *
- * Unknown hosts (OpenAI, Gemini and generic gateways) fall back to [ProviderKind.CUSTOM];
- * the UI still lets the user pick another kind explicitly if the guess is wrong.
- */
-fun inferProviderKindForUrl(baseUrl: String): ProviderKind {
-    val host = hostOf(baseUrl)
-    return when {
-        host.isEmpty() -> ProviderKind.CUSTOM
-        "anthropic.com" in host || "claude.ai" in host -> ProviderKind.ANTHROPIC
-        "deepseek.com" in host -> ProviderKind.DEEPSEEK
-        "moonshot.ai" in host || "moonshot.cn" in host || "kimi" in host -> ProviderKind.KIMI
-        "openrouter.ai" in host -> ProviderKind.LLM_ROUTER
-        "nvidia.com" in host -> ProviderKind.NVIDIA_NIM
-        "opencode.ai" in host -> ProviderKind.OPENCODE_ZEN
-        else -> ProviderKind.CUSTOM
-    }
-}
-
-/**
- * Provider kind that the current [agent] can actually use for a pasted URL.
- *
- * The guess is clamped to [providersForAgent] so auto-detect never selects a
- * provider the agent has no integration for (e.g. OpenCode Zen under
- * DeepSeek-Harness). Falls back to [ProviderKind.CUSTOM] when usable.
- */
-fun detectProviderForAgent(agent: AgentKind, baseUrl: String): ProviderKind? {
-    val valid = providersForAgent(agent)
-    val candidate = inferProviderKindForUrl(baseUrl)
-    return when {
-        candidate in valid -> candidate
-        ProviderKind.CUSTOM in valid -> ProviderKind.CUSTOM
-        else -> null
     }
 }
 
