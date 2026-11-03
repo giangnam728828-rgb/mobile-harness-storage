@@ -239,6 +239,9 @@
     <string name="provider_endpoint_translate">Mobile Harness will translate Claude Code requests for this provider.</string>
     <string name="provider_endpoint_claude">Claude Code will connect through this API endpoint.</string>
     <string name="provider_fixed_by">Fixed by %1$s</string>
+    <string name="provider_auto_detect_hint">Paste any API URL — provider &amp; protocol auto-detect</string>
+    <string name="provider_auto_detect_action">Auto-detect provider</string>
+    <string name="provider_detected_as">Detected %1$s — endpoint, model and protocol applied</string>
     <string name="provider_saved_key_placeholder">Saved securely — leave blank to keep it</string>
     <string name="provider_enter_key">Enter your API key</string>
     <string name="provider_saved_key_ready">A saved key is ready to use</string>

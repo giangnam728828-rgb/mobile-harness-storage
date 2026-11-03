@@ -158,7 +158,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions.jvmTarget = "17"
+    // jvmTarget comes from the top-level kotlin { compilerOptions } block at the end of this file.
     buildFeatures {
         compose = true
         buildConfig = true
@@ -220,4 +220,13 @@ dependencies {
     testImplementation("org.json:json:20250107")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// Kotlin 2.2 removed the deprecated `kotlinOptions` DSL, and the Kotlin DSL
+// script compiler in some toolchains crashes while reporting that error.
+// compilerOptions is the supported replacement.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
