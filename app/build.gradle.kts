@@ -27,8 +27,12 @@ val hasUploadSigning = listOf(
 ).all { !it.isNullOrBlank() }
 val runtimeReleaseBaseUrl =
     "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4"
+// Must point at THIS fork. The upstream manifest advertises APKs signed with the
+// original author's key, so an in-app update from it could never install over
+// this build. The tag URL (not releases/latest/download) is used because the
+// build release is marked prerelease, which releases/latest skips entirely.
 val appUpdateManifestUrl =
-    "https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-update.json"
+    "https://github.com/giangnam728828-rgb/mobile-harness-storage/releases/download/apk-latest/mobile-harness-update.json"
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 

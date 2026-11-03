@@ -8,6 +8,16 @@ on:
 permissions:
   contents: write
 
+# Two builds racing to clobber the same release assets is never useful.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: apk-latest
+  APK_ASSET: mobile-harness-storage-debug.apk
+  MANIFEST_ASSET: mobile-harness-update.json
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -43,20 +53,38 @@ jobs:
           https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4/pocketdev-agy-arm64-2026.09.1.tar.zst
         echo "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78  dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst" | sha256sum -c -
 
-    # A stable certificate is what allows a new build to upgrade the installed
-    # app. AGP's auto-generated debug key differs on every runner, so CI must
-    # sign with the project key stored in repository secrets.
+    # A stable certificate is the ONLY thing that lets a new build upgrade the
+    # installed app. AGP's auto-generated debug key differs on every runner, so
+    # a missing secret would silently produce an APK that can never install over
+    # the previous one. Fail loudly instead of shipping it.
+    - name: Check signing secrets
+      env:
+        STORE_B64: ${{ secrets.MH_UPLOAD_STORE_BASE64 }}
+        STORE_PASSWORD: ${{ secrets.MH_UPLOAD_STORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.MH_UPLOAD_KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.MH_UPLOAD_KEY_PASSWORD }}
+      run: |
+        missing=""
+        [ -n "$STORE_B64" ] || missing="$missing MH_UPLOAD_STORE_BASE64"
+        [ -n "$STORE_PASSWORD" ] || missing="$missing MH_UPLOAD_STORE_PASSWORD"
+        [ -n "$KEY_ALIAS" ] || missing="$missing MH_UPLOAD_KEY_ALIAS"
+        [ -n "$KEY_PASSWORD" ] || missing="$missing MH_UPLOAD_KEY_PASSWORD"
+        if [ -n "$missing" ]; then
+          echo "::error::Missing signing secrets:$missing"
+          echo "Without them Gradle falls back to a per-runner debug key and the APK cannot upgrade the installed app."
+          exit 1
+        fi
+        echo "All four signing secrets are present."
+
     - name: Decode signing keystore
       env:
         MH_UPLOAD_STORE_BASE64: ${{ secrets.MH_UPLOAD_STORE_BASE64 }}
       run: |
-        if [ -z "$MH_UPLOAD_STORE_BASE64" ]; then
-          echo "::error::MH_UPLOAD_STORE_BASE64 secret is missing; APK would be signed with a throwaway key"
-          exit 1
-        fi
         printf '%s' "$MH_UPLOAD_STORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/dist/mh-upload.p12"
         chmod 600 "$GITHUB_WORKSPACE/dist/mh-upload.p12"
 
+    # versionCode must strictly increase for the built-in updater to offer the
+    # build, and it guarantees an install is never rejected as a downgrade.
     - name: Build Online Debug APK
       env:
         MH_UPLOAD_STORE_FILE: ${{ github.workspace }}/dist/mh-upload.p12
@@ -66,43 +94,84 @@ jobs:
         MH_UPLOAD_STORE_TYPE: PKCS12
       run: |
         chmod +x gradlew
-        ./gradlew assembleOnlineDebug --stacktrace
+        ./gradlew assembleOnlineDebug --stacktrace \
+          -PappVersionCode=$((10000 + GITHUB_RUN_NUMBER)) \
+          -PappVersionName="1.0.10+build.${GITHUB_RUN_NUMBER}"
 
-    # Fail the build if the APK is not signed with the project key. Without this
-    # check a missing or mistyped secret would silently produce an APK that
-    # cannot upgrade the installed app.
+    # Hard gate: re-signing with a different key silently costs the user an
+    # uninstall plus a backup restore, so a mismatch must fail the build.
     - name: Verify signing certificate
       env:
         EXPECTED_CERT_SHA256: 6e9e57be2c4c9f2a15234f932f1153deb6076a894d2bae283ba44c3667f73975
       run: |
-        # Diagnostics must never block shipping the APK: a failed verification
-        # is reported as a warning so the artifact/release steps still run.
-        set -uo pipefail
-        APK=$(ls app/build/outputs/apk/online/debug/*.apk 2>/dev/null | head -1)
-        echo "APK: ${APK:-<none>}"
+        set -euo pipefail
+        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
         SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-        echo "SDK: $SDK"
-        APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -type f -name apksigner 2>/dev/null | sort -V | tail -1)
-        echo "apksigner: ${APKSIGNER:-<none>}"
-        if [ -z "$APK" ] || [ -z "$APKSIGNER" ]; then
-          echo "::warning::cannot verify signature (missing apk or apksigner)"
-          exit 0
+        APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)
+        echo "APK: $APK"
+        echo "apksigner: $APKSIGNER"
+        "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
+        # Older build-tools print "Signer #1 certificate SHA-256 digest:",
+        # newer ones print "V2 Signer: certificate SHA-256 digest:".
+        ACTUAL=$(sed -n 's/.*certificate SHA-256 digest: *//p' certs.txt | head -1 | tr -d '\r')
+        echo "expected: $EXPECTED_CERT_SHA256"
+        echo "actual:   ${ACTUAL:-<none>}"
+        if [ "$ACTUAL" != "$EXPECTED_CERT_SHA256" ]; then
+          echo "::error::APK signed with '${ACTUAL:-unknown}' instead of the project key; it could not upgrade the installed app."
+          exit 1
         fi
-        CERTS=$("$APKSIGNER" verify --print-certs "$APK" 2>&1) || true
-        echo "--- apksigner output ---"
-        echo "$CERTS"
-        ACTUAL=$(echo "$CERTS" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
-        echo "actual: ${ACTUAL:-<none>}"
-        if [ "${ACTUAL:-}" != "$EXPECTED_CERT_SHA256" ]; then
-          echo "::warning::APK signed with '${ACTUAL:-unknown}', expected '$EXPECTED_CERT_SHA256'"
+        echo "Signature matches the project key, so this build upgrades the previous one in place."
+
+    # Regression guard for the bug where the Antigravity bundle was gitignored
+    # and silently dropped from the APK.
+    - name: Verify embedded agent bundles
+      run: |
+        set -euo pipefail
+        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        SIZE=$(unzip -l "$APK" | awk '/pocketdev-agy-arm64-2026\.09\.1\.tar\.zst/ {print $1; exit}')
+        if [ -z "$SIZE" ]; then
+          echo "::error::Antigravity bundle is missing from the APK; Antigravity would fail to install."
+          exit 1
         fi
+        echo "Embedded Antigravity bundle: $SIZE bytes"
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: mobile-harness-storage-debug
+        name: mobile-harness-storage-${{ github.sha }}
         path: app/build/outputs/apk/online/debug/*.apk
         retention-days: 30
+
+    - name: Write update manifest
+      run: |
+        set -euo pipefail
+        APK=$(ls app/build/outputs/apk/online/debug/*.apk | head -1)
+        SHORT=$(git rev-parse --short=7 HEAD)
+        VERSION_CODE=$((10000 + GITHUB_RUN_NUMBER))
+        SHA256=$(sha256sum "$APK" | awk '{print $1}')
+        SIZE=$(stat -c%s "$APK")
+        mkdir -p out
+        cp "$APK" "out/$APK_ASSET"
+        # A per-commit filename makes it impossible to reinstall a stale cached
+        # copy of an earlier build with a different signature.
+        cp "$APK" "out/mobile-harness-storage-debug-$SHORT.apk"
+        cat > "out/$MANIFEST_ASSET" <<EOF
+        {
+          "versionCode": $VERSION_CODE,
+          "versionName": "1.0.10+build.${GITHUB_RUN_NUMBER}",
+          "notes": "Build ${SHORT} from main.",
+          "artifacts": {
+            "online": {
+              "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${APK_ASSET}",
+              "sha256": "$SHA256",
+              "sizeBytes": $SIZE
+            }
+          }
+        }
+        EOF
+        echo "versionCode: $VERSION_CODE"
+        echo "sha256: $SHA256"
+        cat "out/$MANIFEST_ASSET"
 
     # Artifacts require a GitHub login to download; a release asset gives the
     # phone one permanent direct link that always points at the newest build.
@@ -110,12 +179,28 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        TAG=apk-latest
-        mkdir -p out
-        cp "$(ls app/build/outputs/apk/online/debug/*.apk | head -1)" out/mobile-harness-storage-debug.apk
-        if ! gh release view "$TAG" >/dev/null 2>&1; then
-          gh release create "$TAG" --title "Latest storage build" \
-            --notes "Auto-built from main. Always download mobile-harness-storage-debug.apk." \
+        set -euo pipefail
+        SHORT=$(git rev-parse --short=7 HEAD)
+        if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          gh release create "$RELEASE_TAG" --title "Latest storage build" \
+            --notes "Auto-built from main. Always download $APK_ASSET." \
             --prerelease
         fi
-        gh release upload "$TAG" out/mobile-harness-storage-debug.apk --clobber
+        gh release upload "$RELEASE_TAG" \
+          "out/$APK_ASSET" \
+          "out/$MANIFEST_ASSET" \
+          "out/mobile-harness-storage-debug-$SHORT.apk" \
+          --clobber
+
+    - name: Job summary
+      run: |
+        {
+          echo "### Build ${{ github.run_number }}"
+          echo
+          echo "| field | value |"
+          echo "|---|---|"
+          echo "| commit | \`${{ github.sha }}\` |"
+          echo "| versionCode | $((10000 + GITHUB_RUN_NUMBER)) |"
+          echo "| signing cert | \`6e9e57be...f73975\` (verified) |"
+          echo "| install | upgrades the installed app in place |"
+        } >> "$GITHUB_STEP_SUMMARY"
