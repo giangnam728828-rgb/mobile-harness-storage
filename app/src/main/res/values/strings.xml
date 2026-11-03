@@ -395,4 +395,17 @@
     <string name="screen_reader_empty">Nothing captured yet. Switch to another app and come back.</string>
     <string name="screen_reader_copy">Copy</string>
     <string name="screen_reader_note">Once enabled, this service can only read on-screen text and button positions; it cannot simulate taps. Letting it act needs a separate confirmation layer.</string>
+    <string name="plugins_title">Plugins</string>
+    <string name="plugins_subtitle_empty">No plugins yet</string>
+    <string name="plugins_subtitle_count">%1$d of %2$d enabled</string>
+    <string name="plugins_note">Plugins are data-only: they describe which commands can run and never load external code. Every command goes through the workspace terminal, exactly like typing it yourself.</string>
+    <string name="plugins_empty">No plugins installed. Copy the template, edit it, install it.</string>
+    <string name="plugins_tool_count">%1$d tools · v%2$s</string>
+    <string name="plugins_add">Add plugin</string>
+    <string name="plugins_copy_template">Copy template</string>
+    <string name="plugins_template_copied">Template copied to clipboard</string>
+    <string name="plugins_manifest_label">Plugin JSON</string>
+    <string name="plugins_install">Install</string>
+    <string name="plugins_invalid">That JSON is not valid. Check the id and tools fields.</string>
+    <string name="plugins_delete">Delete plugin</string>
 </resources>

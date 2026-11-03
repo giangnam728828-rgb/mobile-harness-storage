@@ -295,6 +295,8 @@ data class AppUiState(
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
     val projects: List<Project> = emptyList(),
+    /** Local, data-only plugin manifests the user installed. */
+    val plugins: List<com.jarves.mh.model.PluginManifest> = emptyList(),
     val projectImporting: Boolean = false,
     val projectImportMessage: String? = null,
     val gitCloneRunning: Boolean = false,
@@ -415,6 +417,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
+
+    init {
+        // Plugins are data-only and live in SharedPreferences, so they can be loaded
+        // synchronously before the first screen without touching the runtime.
+        val storedPlugins = preferences.loadPlugins()
+        if (storedPlugins.isNotEmpty()) {
+            _state.update { it.copy(plugins = storedPlugins) }
+        }
+    }
+
+    // ─── Plugins ────────────────────────────────────────────────────
+    fun togglePlugin(id: String) {
+        val updated = _state.value.plugins.map {
+            if (it.id == id) it.copy(enabled = !it.enabled) else it
+        }
+        _state.update { it.copy(plugins = updated) }
+        preferences.savePlugins(updated)
+    }
+
+    fun deletePlugin(id: String) {
+        val updated = _state.value.plugins.filterNot { it.id == id }
+        _state.update { it.copy(plugins = updated) }
+        preferences.savePlugins(updated)
+    }
+
+    /** Installs a manifest pasted by the user; returns false when the JSON is unusable. */
+    fun addPlugin(rawJson: String): Boolean {
+        val manifest = com.jarves.mh.model.PluginManifest.fromJson(rawJson) ?: return false
+        val existing = _state.value.plugins.filterNot { it.id == manifest.id }
+        val updated = existing + manifest.copy(enabled = true)
+        _state.update { it.copy(plugins = updated) }
+        preferences.savePlugins(updated)
+        return true
+    }
+
     private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)

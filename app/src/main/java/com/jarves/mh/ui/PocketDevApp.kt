@@ -2613,6 +2613,9 @@ private fun RootScreenHost(
                     onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
                     onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
                     onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
+                    onTogglePlugin = viewModel::togglePlugin,
+                    onDeletePlugin = viewModel::deletePlugin,
+                    onAddPlugin = { raw -> viewModel.addPlugin(raw) },
                 )
             }
         }

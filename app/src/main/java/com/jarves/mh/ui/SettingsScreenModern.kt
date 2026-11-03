@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -65,6 +66,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -96,6 +98,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.access.ScreenReaderService
+import com.jarves.mh.model.PluginManifest
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
@@ -116,7 +119,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, SCREEN_READER, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, PLUGINS, SCREEN_READER, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +157,9 @@ fun SettingsScreen(
     showBackupDot: Boolean = false,
     onBackupOpened: () -> Unit = {},
     openBackup: Boolean = false,
+    onTogglePlugin: (String) -> Unit = {},
+    onDeletePlugin: (String) -> Unit = {},
+    onAddPlugin: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -290,6 +296,28 @@ fun SettingsScreen(
                         onRefresh = onRefreshDiagnostics,
                         onStopInactiveProcesses = onStopInactiveProcesses,
                         onClearRuntimeCache = onClearRuntimeCache,
+                    )
+                }
+            }
+
+            item {
+                val pluginCount = state.plugins.count { it.enabled }
+                SettingsAccordion(
+                    title = stringResource(R.string.plugins_title),
+                    subtitle = if (state.plugins.isEmpty()) {
+                        stringResource(R.string.plugins_subtitle_empty)
+                    } else {
+                        stringResource(R.string.plugins_subtitle_count, pluginCount, state.plugins.size)
+                    },
+                    icon = Icons.Default.Extension,
+                    expanded = expanded == SettingsSection.PLUGINS,
+                    onClick = { toggle(SettingsSection.PLUGINS) },
+                ) {
+                    PluginsSection(
+                        plugins = state.plugins,
+                        onToggle = onTogglePlugin,
+                        onDelete = onDeletePlugin,
+                        onAdd = onAddPlugin,
                     )
                 }
             }
@@ -689,6 +717,122 @@ private fun formatTransferEta(downloaded: Long, total: Long, bytesPerSecond: Lon
     return if (seconds >= 60L) "${seconds / 60}m ${seconds % 60}s" else "${seconds}s"
 }
 
+
+@Composable
+private fun PluginsSection(
+    plugins: List<PluginManifest>,
+    onToggle: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onAdd: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            stringResource(R.string.plugins_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (plugins.isEmpty()) {
+            Text(
+                stringResource(R.string.plugins_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            ) {
+                Column {
+                    plugins.forEachIndexed { index, plugin ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(start = 13.dp, top = 9.dp, bottom = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(plugin.displayName, fontWeight = FontWeight.Medium)
+                                Text(
+                                    stringResource(
+                                        R.string.plugins_tool_count,
+                                        plugin.toolCount,
+                                        plugin.version,
+                                    ),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = plugin.enabled,
+                                onCheckedChange = { onToggle(plugin.id) },
+                            )
+                            IconButton(onClick = { onDelete(plugin.id) }) {
+                                Icon(
+                                    Icons.Default.DeleteSweep,
+                                    stringResource(R.string.plugins_delete),
+                                    Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        if (index != plugins.lastIndex) HorizontalDivider(Modifier.padding(start = 13.dp))
+                    }
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { adding = !adding }, modifier = Modifier.weight(1f)) {
+                Text(if (adding) stringResource(R.string.action_cancel) else stringResource(R.string.plugins_add))
+            }
+            OutlinedButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(PluginManifest.sampleTemplate()))
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.plugins_template_copied),
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                },
+            ) {
+                Text(stringResource(R.string.plugins_copy_template))
+            }
+        }
+
+        AnimatedVisibility(adding) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    draft,
+                    { draft = it },
+                    label = { Text(stringResource(R.string.plugins_manifest_label)) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 260.dp),
+                )
+                Button(
+                    onClick = {
+                        val manifest = PluginManifest.fromJson(draft)
+                        if (manifest == null) {
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.plugins_invalid),
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            onAdd(draft)
+                            draft = ""
+                            adding = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.plugins_install))
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ScreenReaderSection() {

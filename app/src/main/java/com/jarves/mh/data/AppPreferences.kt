@@ -533,6 +533,24 @@ class AppPreferences(private val context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    // ─── Plugins ────────────────────────────────────────────────────
+    /** Manifests live as one JSON array so a single write keeps the list consistent. */
+    fun loadPlugins(): List<com.jarves.mh.model.PluginManifest> {
+        val raw = preferences.getString("plugins_json", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { index ->
+                com.jarves.mh.model.PluginManifest.fromJson(arr.getJSONObject(index).toString())
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun savePlugins(plugins: List<com.jarves.mh.model.PluginManifest>) {
+        val arr = JSONArray()
+        plugins.forEach { arr.put(it.toJson()) }
+        preferences.edit().putString("plugins_json", arr.toString()).apply()
+    }
+
     private fun String.toChatTitle(): String {
         val clean = replace(Regex("\\s+"), " ").trim()
         return if (clean.length <= 42) clean else clean.take(39).trimEnd() + "…"
