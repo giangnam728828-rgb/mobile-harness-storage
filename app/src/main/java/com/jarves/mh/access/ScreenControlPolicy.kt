@@ -57,6 +57,8 @@ object ScreenControlPolicy {
         blocklist: List<String>,
         maxActionsPerSession: Int,
         actionsThisSession: Int,
+        /** This app's own package: the agent must never drive our own buttons. */
+        selfPackage: String? = null,
     ): Verdict {
         if (actionsThisSession >= maxActionsPerSession) {
             return Verdict.Blocked("本次会话动作次数已达上限（$maxActionsPerSession 次），请重新开始")
@@ -68,6 +70,11 @@ object ScreenControlPolicy {
             }
             if (hit != null) {
                 return Verdict.Blocked("当前应用匹配禁止规则「$hit」，不允许自动操作")
+            }
+            // Coordinates are read off the target app's screen; if this app is in front the
+            // same tap would press our own buttons (delete project, uninstall, settings).
+            if (needsForeground(request.kind) && selfPackage != null && pkg == selfPackage.lowercase()) {
+                return Verdict.Blocked("当前前台是本应用，请先切换到你要操作的那个应用")
             }
         }
         return when (request.kind) {
@@ -95,6 +102,8 @@ object ScreenControlPolicy {
         request: ScreenActionRequest,
         approved: Boolean,
         blockReason: String?,
+        /** App the request was offered for; re-checked so a switched screen cannot be hit. */
+        expectedPackage: String? = null,
     ): ScreenActionResult {
         if (blockReason != null) {
             return ScreenActionResult(request.id, ScreenActionStatus.BLOCKED, blockReason)
@@ -102,8 +111,34 @@ object ScreenControlPolicy {
         if (!approved) {
             return ScreenActionResult(request.id, ScreenActionStatus.DENIED, "用户拒绝了这次操作")
         }
+        if (needsForeground(request.kind) && !expectedPackage.isNullOrBlank()) {
+            val foreground = ScreenController.awaitForeground(expectedPackage)
+            if (foreground != expectedPackage) {
+                return ScreenActionResult(
+                    request.id,
+                    ScreenActionStatus.FAILED,
+                    "前台应用已经变成 ${foreground ?: "未知"}，这次操作没有执行",
+                )
+            }
+        }
+        val before = System.currentTimeMillis()
         val outcome = ScreenController.perform(request)
-        val snapshot = ScreenReaderService.currentText()
+        if (outcome.status != ScreenActionStatus.OK) {
+            return outcome.copy(snapshot = ScreenReaderService.currentText())
+        }
+        // The service refreshes on accessibility events, which arrive after a delay. Without
+        // this the agent would read the screen from before its own action and retry blindly.
+        val snapshot = ScreenReaderService.awaitSnapshotAfter(
+            after = before,
+            timeoutMs = 1_800L,
+            expectedPackage = expectedPackage,
+        )
         return outcome.copy(snapshot = snapshot)
+    }
+
+    /** Actions aimed at coordinates or text only make sense on the app they were offered for. */
+    private fun needsForeground(kind: ScreenActionKind): Boolean = when (kind) {
+        ScreenActionKind.TAP, ScreenActionKind.SWIPE, ScreenActionKind.TYPE -> true
+        else -> false
     }
 }

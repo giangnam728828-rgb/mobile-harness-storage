@@ -536,11 +536,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var screenWatchJob: Job? = null
     private var screenActionsThisSession = 0
 
+    /**
+     * One request at a time, held outside the UI state: the approval card is an overlay
+     * window, so the in-app dialog state stays empty while it is up.
+     */
+    private data class PendingScreenAction(
+        val request: com.jarves.mh.model.ScreenActionRequest,
+        val root: File,
+        val file: File,
+        val targetPackage: String?,
+    )
+
+    @Volatile
+    private var screenActionInFlight = false
+    private var pendingScreenAction: PendingScreenAction? = null
+
+    /** Mailbox shared with `mh-screen` inside the guest, independent of the project folder. */
+    private fun screenMailboxRoot(): File =
+        File(getApplication<Application>().filesDir, com.jarves.mh.access.ScreenBridgeInstaller.HOST_MAILBOX)
+
     fun setScreenControlEnabled(enabled: Boolean) {
         preferences.screenControlEnabled = enabled
         if (!enabled) screenActionsThisSession = 0
         _state.update { it.copy(screenControlEnabled = enabled) }
-        if (enabled) startScreenActionWatch() else stopScreenActionWatch()
+        if (enabled) {
+            ensureScreenHelper()
+            startScreenActionWatch()
+        } else {
+            stopScreenActionWatch()
+        }
+    }
+
+    /**
+     * Writes the `mh-screen` helper when it is missing or out of date.
+     *
+     * Runtimes installed before screen control existed never go through the full installer
+     * again, so without this the agent gets "command not found" on every action.
+     */
+    private fun ensureScreenHelper() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val rootfs = installer.rootfsDir()
+                if (!rootfs.isDirectory) return@runCatching
+                if (!com.jarves.mh.access.ScreenBridgeInstaller.isInstalled(rootfs)) {
+                    com.jarves.mh.access.ScreenBridgeInstaller.install(rootfs)
+                }
+            }
+        }
     }
 
     fun setScreenControlMaxActions(value: Int) {
@@ -573,16 +615,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(600)
                 if (!_state.value.screenControlEnabled) continue
-                if (_state.value.pendingScreenAction != null) continue
-                val project = _state.value.activeProject ?: continue
+                if (screenActionInFlight) continue
                 if (_state.value.pluginRunToolId != null) continue
-                val workspace = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
-                if (!workspace.isDirectory) continue
-                com.jarves.mh.access.ScreenActionFiles.pruneResults(workspace)
-                val pending = com.jarves.mh.access.ScreenActionFiles.readPending(workspace).firstOrNull()
+                val root = screenMailboxRoot()
+                com.jarves.mh.access.ScreenActionFiles.pruneResults(root)
+                val pending = com.jarves.mh.access.ScreenActionFiles.readPending(root).firstOrNull()
                     ?: continue
                 val (file, request) = pending
-                offerScreenAction(project, workspace, file, request)
+                offerScreenAction(root, file, request)
             }
         }
     }
@@ -590,12 +630,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopScreenActionWatch() {
         screenWatchJob?.cancel()
         screenWatchJob = null
-        _state.update { it.copy(pendingScreenAction = null) }
+        val abandoned = takePendingScreenAction()
+        if (abandoned != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                com.jarves.mh.access.ScreenActionFiles.writeResult(
+                    abandoned.root,
+                    com.jarves.mh.model.ScreenActionResult(
+                        abandoned.request.id,
+                        com.jarves.mh.model.ScreenActionStatus.DENIED,
+                        "屏幕操作已被关闭",
+                    ),
+                )
+                com.jarves.mh.access.ScreenActionFiles.consume(abandoned.file)
+            }
+        }
+    }
+
+    /** Clears the in-flight request and hides the approval card; returns what was pending. */
+    private fun takePendingScreenAction(): PendingScreenAction? {
+        val pending = pendingScreenAction
+        pendingScreenAction = null
+        screenActionInFlight = false
+        com.jarves.mh.access.ScreenController.hideApproval()
+        if (_state.value.pendingScreenAction != null) {
+            _state.update { it.copy(pendingScreenAction = null, pendingScreenActionApp = "") }
+        }
+        return pending
     }
 
     private fun offerScreenAction(
-        project: Project,
-        workspace: File,
+        root: File,
         file: File,
         request: com.jarves.mh.model.ScreenActionRequest,
     ) {
@@ -606,11 +670,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             blocklist = screenBlocklist(),
             maxActionsPerSession = preferences.screenControlMaxActions,
             actionsThisSession = screenActionsThisSession,
+            selfPackage = getApplication<Application>().packageName,
         )
         when (verdict) {
             is com.jarves.mh.access.ScreenControlPolicy.Verdict.Blocked -> {
                 com.jarves.mh.access.ScreenActionFiles.writeResult(
-                    workspace,
+                    root,
                     com.jarves.mh.model.ScreenActionResult(
                         request.id,
                         com.jarves.mh.model.ScreenActionStatus.BLOCKED,
@@ -621,57 +686,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(screenActionNotice = verdict.reason) }
             }
             com.jarves.mh.access.ScreenControlPolicy.Verdict.Allowed -> {
-                pendingScreenActionFile = file
-                pendingScreenActionWorkspace = workspace
-                _state.update {
-                    it.copy(
-                        pendingScreenAction = request,
-                        pendingScreenActionApp = currentPackage.orEmpty(),
-                    )
+                pendingScreenAction = PendingScreenAction(request, root, file, currentPackage)
+                screenActionInFlight = true
+                // The card is drawn over the app the action targets. An in-app dialog can only
+                // be seen after switching back here, which would defeat the whole point.
+                val shown = com.jarves.mh.access.ScreenController.showApproval(
+                    request = request,
+                    targetPackage = currentPackage,
+                    onApprove = { approveScreenAction() },
+                    onReject = { rejectScreenAction() },
+                    onExpired = { expireScreenAction() },
+                )
+                if (!shown) {
+                    _state.update {
+                        it.copy(
+                            pendingScreenAction = request,
+                            pendingScreenActionApp = currentPackage.orEmpty(),
+                        )
+                    }
                 }
             }
         }
     }
 
-    private var pendingScreenActionFile: File? = null
-    private var pendingScreenActionWorkspace: File? = null
-
     fun approveScreenAction() {
-        val request = _state.value.pendingScreenAction ?: return
-        val workspace = pendingScreenActionWorkspace
-        val file = pendingScreenActionFile
-        _state.update { it.copy(pendingScreenAction = null) }
-        pendingScreenActionFile = null
-        pendingScreenActionWorkspace = null
-        if (workspace == null || file == null) return
+        val pending = takePendingScreenAction() ?: return
         screenActionsThisSession += 1
         viewModelScope.launch(Dispatchers.IO) {
+            // The card was just removed. A gesture dispatched in the same frame is delivered
+            // to whatever is still on top, so give the window stack a moment to settle.
+            delay(SCREEN_ACTION_GRACE_MS)
             val result = com.jarves.mh.access.ScreenControlPolicy.execute(
-                request = request,
+                request = pending.request,
                 approved = true,
                 blockReason = null,
+                expectedPackage = pending.targetPackage,
             )
-            com.jarves.mh.access.ScreenActionFiles.writeResult(workspace, result)
-            com.jarves.mh.access.ScreenActionFiles.consume(file)
+            com.jarves.mh.access.ScreenActionFiles.writeResult(pending.root, result)
+            com.jarves.mh.access.ScreenActionFiles.consume(pending.file)
         }
     }
 
     fun rejectScreenAction() {
-        val request = _state.value.pendingScreenAction ?: return
-        val workspace = pendingScreenActionWorkspace
-        val file = pendingScreenActionFile
-        _state.update { it.copy(pendingScreenAction = null) }
-        pendingScreenActionFile = null
-        pendingScreenActionWorkspace = null
-        if (workspace == null || file == null) return
+        val pending = takePendingScreenAction() ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val result = com.jarves.mh.access.ScreenControlPolicy.execute(
-                request = request,
+                request = pending.request,
                 approved = false,
                 blockReason = null,
             )
-            com.jarves.mh.access.ScreenActionFiles.writeResult(workspace, result)
-            com.jarves.mh.access.ScreenActionFiles.consume(file)
+            com.jarves.mh.access.ScreenActionFiles.writeResult(pending.root, result)
+            com.jarves.mh.access.ScreenActionFiles.consume(pending.file)
+        }
+    }
+
+    /** The approval card timed out; answer the waiting helper before its own 120 s deadline. */
+    private fun expireScreenAction() {
+        val pending = takePendingScreenAction() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            com.jarves.mh.access.ScreenActionFiles.writeResult(
+                pending.root,
+                com.jarves.mh.model.ScreenActionResult(
+                    pending.request.id,
+                    com.jarves.mh.model.ScreenActionStatus.TIMEOUT,
+                    "等待用户确认超时",
+                ),
+            )
+            com.jarves.mh.access.ScreenActionFiles.consume(pending.file)
         }
     }
 
@@ -684,14 +765,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Screen snapshot to attach to a new session, or an empty string when the user has not
      * opted in or the accessibility service is not running.
      *
-     * Read at send time rather than kept live so the agent sees the screen the user was
-     * looking at when they wrote the message, not whatever is on screen later.
+     * The service never mirrors this app's own windows, so the text is from the last *other*
+     * app the user had open — which is what they want the agent to look at. That also means
+     * it can be older than the message, so the age is spelled out rather than implied.
      */
     private fun currentScreenContext(): String {
         if (!_state.value.screenContextForAgent) return ""
         val app = getApplication<Application>()
         if (!com.jarves.mh.access.ScreenReaderService.isEnabled(app)) return ""
-        return com.jarves.mh.access.ScreenReaderService.currentText()
+        val text = com.jarves.mh.access.ScreenReaderService.currentText()
+        if (text.isBlank()) return ""
+        val ageMs = com.jarves.mh.access.ScreenReaderService.snapshotAgeMs()
+        if (ageMs < 2_000L) return text
+        return "# Captured ${ageMs / 1000} seconds before this message, from the last app you had open.\n" + text
     }
 
     /** Turns screen sharing on or off for agent sessions. */
@@ -831,6 +917,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         startScreenActionWatch()
+        ensureScreenHelper()
         viewModelScope.launch {
             AndroidAppInstaller.events.collect { event ->
                 if (event.operationId != pendingAndroidInstallId) return@collect
@@ -5829,5 +5916,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val TEST_PROVIDER_DEFAULTS_VERSION = 1
         private const val TEST_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
         private const val TEST_OPENROUTER_MODEL = "stealth/ox-alpha"
+
+        /** Pause between removing the approval card and dispatching the gesture. */
+        private const val SCREEN_ACTION_GRACE_MS = 400L
     }
 }

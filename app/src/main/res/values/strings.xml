@@ -420,6 +420,7 @@
     <string name="screen_reader_share_title">Let the AI read this screen</string>
     <string name="screen_reader_share_desc">When on, every message you send includes a snapshot of the current screen. Off by default.</string>
     <string name="screen_reader_recheck">I turned it on in system settings</string>
+    <string name="screen_reader_source">Captured from %1$s (this app never mirrors itself)</string>
     <string name="vm_terminal_idle_timeout">Stopped after %1$s minutes without any output.</string>
     <string name="vm_no_empty_projects">No empty projects to clean up.</string>
     <string name="vm_empty_projects_removed">Removed %1$d empty project(s).</string>

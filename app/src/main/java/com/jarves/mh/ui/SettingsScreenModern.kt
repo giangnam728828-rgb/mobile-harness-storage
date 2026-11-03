@@ -1219,7 +1219,7 @@ private fun ScreenReaderSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        captured = liveSnapshot.ifBlank { ScreenReaderService.currentText() }
+                        captured = liveSnapshot.text.ifBlank { ScreenReaderService.currentText() }
                         if (captured.isBlank()) {
                             android.widget.Toast.makeText(
                                 context,
@@ -1234,7 +1234,7 @@ private fun ScreenReaderSection(
                 }
                 OutlinedButton(
                     onClick = {
-                        val text = captured.ifBlank { liveSnapshot }
+                        val text = captured.ifBlank { liveSnapshot.text }
                         if (text.isNotBlank()) {
                             clipboard.setText(AnnotatedString(text))
                             android.widget.Toast.makeText(
@@ -1250,7 +1250,14 @@ private fun ScreenReaderSection(
             }
         }
 
-        val preview = captured.ifBlank { liveSnapshot }
+        val preview = captured.ifBlank { liveSnapshot.text }
+        if (liveSnapshot.packageName.isNotBlank() && captured.isBlank()) {
+            Text(
+                stringResource(R.string.screen_reader_source, liveSnapshot.packageName),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (preview.isNotBlank()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),

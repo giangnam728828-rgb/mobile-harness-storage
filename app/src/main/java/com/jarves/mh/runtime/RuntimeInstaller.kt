@@ -62,6 +62,10 @@ private data class RuntimeBundle(
 class RuntimeInstaller(private val context: Context) {
     private val runtimeDir = File(context.filesDir, "runtime")
     private val rootfs = File(runtimeDir, "ubuntu")
+
+    /** Guest filesystem root; helpers are written into it from outside the installer flow. */
+    fun rootfsDir(): File = rootfs
+
     private val downloads = File(context.cacheDir, "runtime-downloads")
     private val coreReadyMarker = File(rootfs, ".pocket-runtime-ready")
     private val claudeMarker = File(rootfs, ".pocket-claude-version")
@@ -1543,6 +1547,11 @@ class RuntimeInstaller(private val context: Context) {
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_bridge), 0.42f))
         check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
         check(File(rootfs, "usr/bin/git").canExecute()) { "Core runtime is missing Git" }
+        // Devices that installed the runtime before screen control existed never run the full
+        // installer again, so the `mh-screen` helper has to be topped up on every start.
+        if (!com.jarves.mh.access.ScreenBridgeInstaller.isInstalled(rootfs)) {
+            runCatching { com.jarves.mh.access.ScreenBridgeInstaller.install(rootfs) }
+        }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_runtime_ready), 1f))
         return installed
     }

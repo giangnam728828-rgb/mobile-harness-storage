@@ -223,6 +223,7 @@
     <string name="screen_reader_share_title">允许 AI 读取当前屏幕</string>
     <string name="screen_reader_share_desc">开启后，你发的每条消息都会附上当前屏幕的快照。默认关闭。</string>
     <string name="screen_reader_recheck">我已在系统设置里开启</string>
+    <string name="screen_reader_source">快照来源：%1$s（本应用自己的界面不会被镜像）</string>
     <string name="vm_terminal_idle_timeout">已停止：连续 %1$s 分钟没有任何输出。</string>
     <string name="vm_no_empty_projects">没有需要清理的空项目。</string>
     <string name="vm_empty_projects_removed">已清理 %1$d 个空项目。</string>

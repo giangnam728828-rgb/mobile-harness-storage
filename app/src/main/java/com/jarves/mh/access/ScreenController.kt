@@ -25,7 +25,75 @@ object ScreenController {
     @Volatile
     var service: AccessibilityService? = null
 
+    /** Concrete service instance, needed for the approval overlay window. */
+    @Volatile
+    var reader: ScreenReaderService? = null
+
+    @Volatile
+    private var approval: ScreenApprovalOverlay? = null
+
     private const val GESTURE_TIMEOUT_MS = 5_000L
+
+    /**
+     * Shows the approval card over whatever app is in the foreground.
+     *
+     * Returns false when no overlay could be added, so the caller can fall back to the
+     * in-app dialog instead of silently dropping the request.
+     */
+    fun showApproval(
+        request: ScreenActionRequest,
+        targetPackage: String?,
+        onApprove: () -> Unit,
+        onReject: () -> Unit,
+        onExpired: () -> Unit,
+    ): Boolean {
+        val svc = reader ?: return false
+        hideApproval()
+        val overlay = ScreenApprovalOverlay(svc, onApprove, onReject, onExpired)
+        val shown = overlay.show(request, describeTarget(svc, targetPackage))
+        if (shown) approval = overlay else overlay.dismiss()
+        return shown
+    }
+
+    fun hideApproval() {
+        val current = approval ?: return
+        approval = null
+        current.dismiss()
+    }
+
+    /** "微信 (com.tencent.mm)" when the label is readable, otherwise just the package. */
+    private fun describeTarget(context: android.content.Context, packageName: String?): String {
+        if (packageName.isNullOrBlank()) return ""
+        val label = runCatching {
+            val info = context.packageManager.getApplicationInfo(packageName, 0)
+            context.packageManager.getApplicationLabel(info).toString()
+        }.getOrNull()
+        return if (label.isNullOrBlank() || label == packageName) packageName else "$label ($packageName)"
+    }
+
+    /**
+     * Waits until [expected] is the foreground app again.
+     *
+     * Right after the approval card is removed the window stack still reports this app for a
+     * few frames. Dispatching a tap during that gap sends it to the wrong window, so the
+     * action waits for the target app instead of guessing.
+     */
+    fun awaitForeground(expected: String?, timeoutMs: Long = 1_400L): String? {
+        var last = currentPackage()
+        if (expected.isNullOrBlank()) return last
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (last == expected) return last
+            try {
+                Thread.sleep(80L)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return last
+            }
+            last = currentPackage()
+        }
+        return last
+    }
 
     fun perform(request: ScreenActionRequest): ScreenActionResult {
         val svc = service

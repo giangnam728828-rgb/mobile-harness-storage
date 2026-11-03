@@ -7,26 +7,26 @@ import java.io.File
 /**
  * The on-disk mailbox an agent uses to ask for screen actions.
  *
- * The guest runtime cannot call Android APIs, so it drops a JSON request into the project
- * workspace and waits for a JSON result. The app polls that directory, shows the request to
- * the user, and only then writes the result back. Because the mailbox lives inside the
- * project workspace, the agent can only reach projects the user already has open.
+ * The guest runtime cannot call Android APIs, so it drops a JSON request into a directory
+ * and waits for a JSON result. The app polls that directory, shows the request to the user,
+ * and only then writes the result back.
+ *
+ * The mailbox lives in the bridge directory (`/pocket-bridge/screen` inside the guest), not
+ * in the project workspace: the workspace path depends on where the agent happened to `cd`,
+ * and a helper that wrote to `$PWD` silently stranded every request made from a subfolder.
  */
 object ScreenActionFiles {
 
-    const val DIR_NAME = ".mh-screen"
     private const val REQUESTS = "requests"
     private const val RESULTS = "results"
 
-    fun requestsDir(projectWorkspace: File): File =
-        File(projectWorkspace, "$DIR_NAME/$REQUESTS").apply { mkdirs() }
+    fun requestsDir(root: File): File = File(root, REQUESTS).apply { mkdirs() }
 
-    fun resultsDir(projectWorkspace: File): File =
-        File(projectWorkspace, "$DIR_NAME/$RESULTS").apply { mkdirs() }
+    fun resultsDir(root: File): File = File(root, RESULTS).apply { mkdirs() }
 
-    /** Reads every pending request, oldest first, and removes malformed files. */
-    fun readPending(projectWorkspace: File): List<Pair<File, ScreenActionRequest>> {
-        val dir = requestsDir(projectWorkspace)
+    /** Reads every pending request, oldest first, and retires malformed files. */
+    fun readPending(root: File): List<Pair<File, ScreenActionRequest>> {
+        val dir = requestsDir(root)
         val files = dir.listFiles { file -> file.isFile && file.name.endsWith(".json") }
             ?.sortedBy { it.name }
             ?: return emptyList()
@@ -46,8 +46,8 @@ object ScreenActionFiles {
     }
 
     /** Writes the result where the waiting agent will find it. */
-    fun writeResult(projectWorkspace: File, result: ScreenActionResult) {
-        val dir = resultsDir(projectWorkspace)
+    fun writeResult(root: File, result: ScreenActionResult) {
+        val dir = resultsDir(root)
         val target = File(dir, "${result.id}.json")
         val temp = File(dir, "${result.id}.json.tmp")
         runCatching {
@@ -64,9 +64,9 @@ object ScreenActionFiles {
     }
 
     /** Drops result files older than an hour so the mailbox cannot grow without bound. */
-    fun pruneResults(projectWorkspace: File) {
+    fun pruneResults(root: File) {
         val cutoff = System.currentTimeMillis() - 60L * 60 * 1000
-        resultsDir(projectWorkspace).listFiles()?.forEach { file ->
+        resultsDir(root).listFiles()?.forEach { file ->
             if (file.lastModified() < cutoff) runCatching { file.delete() }
         }
     }

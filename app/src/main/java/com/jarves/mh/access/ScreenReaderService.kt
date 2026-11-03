@@ -14,6 +14,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** One captured screen, tagged with the app it belongs to. */
+data class ScreenSnapshot(
+    val packageName: String = "",
+    val text: String = "",
+    val capturedAt: Long = 0L,
+)
+
 /**
  * Read-only screen capture.
  *
@@ -30,7 +37,9 @@ class ScreenReaderService : AccessibilityService() {
         super.onServiceConnected()
         connected.value = true
         ScreenController.service = this
-        refreshNow()
+        ScreenController.reader = this
+        instance = this
+        requestRefresh()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -49,6 +58,9 @@ class ScreenReaderService : AccessibilityService() {
     override fun onDestroy() {
         connected.value = false
         if (ScreenController.service === this) ScreenController.service = null
+        if (ScreenController.reader === this) ScreenController.reader = null
+        if (instance === this) instance = null
+        ScreenController.hideApproval()
         super.onDestroy()
     }
 
@@ -61,32 +73,90 @@ class ScreenReaderService : AccessibilityService() {
         if (!throttled.compareAndSet(false, true)) return
         mainHandler.postDelayed({
             throttled.set(false)
-            refreshNow()
+            capture()
         }, REFRESH_INTERVAL_MS)
     }
 
-    private fun refreshNow() {
+    /** Re-captures immediately; callers use this when they cannot wait for an event. */
+    internal fun requestRefresh() {
+        mainHandler.post { capture() }
+    }
+
+    /**
+     * Mirrors the active window into [snapshot].
+     *
+     * The app's own windows are skipped on purpose: the approval card and the chat screen
+     * are drawn by this very package, so mirroring them would overwrite the screen the user
+     * actually wants the agent to see. Keeping the last foreign screen is the whole point —
+     * the user has to be inside this app to type the message that carries it.
+     */
+    private fun capture() {
         val node = runCatching { rootInActiveWindow }.getOrNull() ?: return
+        val pkg = runCatching { node.packageName?.toString().orEmpty() }.getOrDefault("")
+        if (pkg == packageName) return
         val text = runCatching {
             buildString {
-                append("package: ").appendLine(node.packageName ?: "?")
+                append("package: ").append(pkg.ifBlank { "?" }).appendLine()
                 node.collectReadableText(this, 0)
             }
         }.getOrNull()?.trim()
         if (text.isNullOrBlank()) return
-        snapshot.value = text
+        snapshot.value = ScreenSnapshot(pkg, text, System.currentTimeMillis())
+        lastCaptureAt = System.currentTimeMillis()
     }
 
     companion object {
         private const val REFRESH_INTERVAL_MS = 400L
 
-        private val snapshot = MutableStateFlow("")
-        val screenSnapshot: StateFlow<String> = snapshot
+        private val snapshot = MutableStateFlow(ScreenSnapshot())
+        val screenSnapshot: StateFlow<ScreenSnapshot> = snapshot
 
         private val connected = MutableStateFlow(false)
         val isConnected: StateFlow<Boolean> = connected
 
-        fun currentText(): String = snapshot.value
+        @Volatile
+        private var instance: ScreenReaderService? = null
+
+        @Volatile
+        private var lastCaptureAt = 0L
+
+        fun currentText(): String = snapshot.value.text
+
+        /** Package of the mirrored screen, or null when nothing foreign was captured yet. */
+        fun currentPackageName(): String? = snapshot.value.packageName.takeIf { it.isNotBlank() }
+
+        fun snapshotAgeMs(): Long =
+            snapshot.value.capturedAt.takeIf { it > 0L }?.let { System.currentTimeMillis() - it } ?: -1L
+
+        /**
+         * Waits for a capture newer than [after], nudging the service to look again.
+         *
+         * The service refreshes on accessibility events, which is too slow right after a
+         * gesture: the agent would read the screen from before its own tap and conclude that
+         * nothing happened. This forces a fresh capture instead of returning the old one.
+         */
+        fun awaitSnapshotAfter(
+            after: Long,
+            timeoutMs: Long = 1_600L,
+            expectedPackage: String? = null,
+        ): String {
+            val svc = instance ?: return currentText()
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val current = snapshot.value
+                val fresh = current.capturedAt > after
+                val rightApp = expectedPackage == null || current.packageName == expectedPackage
+                if (fresh && rightApp) return current.text
+                svc.requestRefresh()
+                try {
+                    Thread.sleep(80L)
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+            return currentText()
+        }
 
         /**
          * True when the user switched the service on in system settings. A service cannot
