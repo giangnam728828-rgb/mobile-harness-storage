@@ -383,4 +383,16 @@
     <string name="diagnostics_inactive_stopped">Inactive processes stopped</string>
     <string name="diagnostics_cache_busy">Wait for active work to finish before clearing output</string>
     <string name="diagnostics_cache_cleared">Disposable runtime output cleared</string>
+    <string name="screen_reader_title">Screen reader (accessibility)</string>
+    <string name="screen_reader_subtitle_on">On · read-only, never taps</string>
+    <string name="screen_reader_subtitle_off">Off</string>
+    <string name="screen_reader_label">Screen mirror</string>
+    <string name="screen_reader_description">Reads the text currently on screen. It never taps, swipes or changes anything.</string>
+    <string name="screen_reader_enable">Enable in system settings</string>
+    <string name="screen_reader_open_settings">Open accessibility settings</string>
+    <string name="screen_reader_capture">Read current screen</string>
+    <string name="screen_reader_copied">Screen text copied</string>
+    <string name="screen_reader_empty">Nothing captured yet. Switch to another app and come back.</string>
+    <string name="screen_reader_copy">Copy</string>
+    <string name="screen_reader_note">Once enabled, this service can only read on-screen text and button positions; it cannot simulate taps. Letting it act needs a separate confirmation layer.</string>
 </resources>

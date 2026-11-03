@@ -18,11 +18,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +71,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,6 +95,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.access.ScreenReaderService
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
@@ -111,7 +116,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, SCREEN_READER, DIAGNOSTICS, BACKUP, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -286,6 +291,23 @@ fun SettingsScreen(
                         onStopInactiveProcesses = onStopInactiveProcesses,
                         onClearRuntimeCache = onClearRuntimeCache,
                     )
+                }
+            }
+
+            item {
+                val screenReaderOn = ScreenReaderService.isEnabled(context)
+                SettingsAccordion(
+                    title = stringResource(R.string.screen_reader_title),
+                    subtitle = if (screenReaderOn) {
+                        stringResource(R.string.screen_reader_subtitle_on)
+                    } else {
+                        stringResource(R.string.screen_reader_subtitle_off)
+                    },
+                    icon = Icons.Default.Visibility,
+                    expanded = expanded == SettingsSection.SCREEN_READER,
+                    onClick = { toggle(SettingsSection.SCREEN_READER) },
+                ) {
+                    ScreenReaderSection()
                 }
             }
 
@@ -665,6 +687,95 @@ private fun formatTransferSpeed(bytesPerSecond: Long): String = when {
 private fun formatTransferEta(downloaded: Long, total: Long, bytesPerSecond: Long): String {
     val seconds = ((total - downloaded).coerceAtLeast(0L) / bytesPerSecond.coerceAtLeast(1L)).coerceAtLeast(1L)
     return if (seconds >= 60L) "${seconds / 60}m ${seconds % 60}s" else "${seconds}s"
+}
+
+
+@Composable
+private fun ScreenReaderSection() {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var enabled by remember { mutableStateOf(ScreenReaderService.isEnabled(context)) }
+    val liveSnapshot by ScreenReaderService.screenSnapshot.collectAsState()
+    var captured by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        enabled = ScreenReaderService.isEnabled(context)
+        if (enabled && captured.isBlank()) captured = ScreenReaderService.currentText()
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            stringResource(R.string.screen_reader_note),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (!enabled) {
+            Button(
+                onClick = {
+                    runCatching { context.startActivity(ScreenReaderService.settingsIntent()) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.screen_reader_enable))
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        captured = liveSnapshot.ifBlank { ScreenReaderService.currentText() }
+                        if (captured.isBlank()) {
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.screen_reader_empty),
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(stringResource(R.string.screen_reader_capture))
+                }
+                OutlinedButton(
+                    onClick = {
+                        val text = captured.ifBlank { liveSnapshot }
+                        if (text.isNotBlank()) {
+                            clipboard.setText(AnnotatedString(text))
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(R.string.screen_reader_copied),
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.screen_reader_copy))
+                }
+            }
+        }
+
+        val preview = captured.ifBlank { liveSnapshot }
+        if (preview.isNotBlank()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(
+                    Modifier
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp),
+                ) {
+                    Text(
+                        preview,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

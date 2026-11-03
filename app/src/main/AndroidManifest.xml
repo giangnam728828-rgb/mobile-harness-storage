@@ -65,6 +65,19 @@
             android:name=".backup.BackupService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Read-only screen mirror; the user turns it on in system settings. -->
+        <service
+            android:name=".access.ScreenReaderService"
+            android:exported="false"
+            android:label="@string/screen_reader_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
