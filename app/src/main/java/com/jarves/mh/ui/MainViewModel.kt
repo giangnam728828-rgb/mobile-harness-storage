@@ -3504,23 +3504,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (active != null) {
-            val chats = preferences.loadProjectChats(active.id)
-            val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
-            val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
-            val userFiles = if (workspaceDir.isDirectory) {
-                workspaceDir.walkTopDown().filter { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }.count()
-            } else 0
+            // Deciding "empty" reads every transcript and walks the whole workspace tree.
+            // On a project with node_modules or .git that is seconds of main-thread I/O:
+            // pressing back froze the UI until Android threw an ANR and killed the app.
+            // Hide the workspace right away and evaluate the cleanup in the background.
+            val projectId = active.id
+            viewModelScope.launch(Dispatchers.IO) {
+                val chats = preferences.loadProjectChats(projectId)
+                val userMessages = chats.sumOf { preferences.loadMessages(projectId, it.id).count { m -> m.fromUser } }
+                val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/$projectId")
+                val userFiles = if (workspaceDir.isDirectory) {
+                    workspaceDir.walkTopDown().filter { file ->
+                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                    }.count()
+                } else 0
+                if (userMessages > 0 || userFiles > 0) return@launch
 
-            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
-                // Unused empty project; delete immediately so it does not clutter the project list.
-                _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
-                preferences.saveProjects(_state.value.projects)
-                viewModelScope.launch(Dispatchers.IO) {
+                // Re-check on the main thread before touching anything: the user may have
+                // re-opened the project or started a task while the scan was running.
+                val safeToDelete = withContext(Dispatchers.Main) {
+                    val current = _state.value
+                    val stillClosed = current.activeProject?.id != projectId &&
+                        current.projects.any { it.id == projectId } &&
+                        !current.isRunning && !current.projectTerminalRunning && !current.androidBuildRunning
+                    if (stillClosed) {
+                        _state.update { s -> s.copy(projects = s.projects.filterNot { it.id == projectId }) }
+                        preferences.saveProjects(_state.value.projects)
+                    }
+                    stillClosed
+                }
+                if (safeToDelete) {
+                    // Unused empty project; delete it so it does not clutter the project list.
                     workspaceDir.deleteRecursively()
-                    terminalHistoryFile(active.id).delete()
-                    preferences.deleteProjectChats(active.id)
+                    terminalHistoryFile(projectId).delete()
+                    preferences.deleteProjectChats(projectId)
                 }
             }
         }
@@ -4292,38 +4309,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (state.isRunning || state.projectTerminalRunning || state.androidBuildRunning) return
         val activeId = state.activeProject?.id
         val filesDir = getApplication<Application>().filesDir
-        val candidates = state.projects.filter { project ->
-            if (project.id == activeId) return@filter false
-            val chats = preferences.loadProjectChats(project.id)
-            val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
-            if (userMessages > 0) return@filter false
-            val workspaceDir = File(filesDir, "workspaces/${project.id}")
-            val userFiles = if (workspaceDir.isDirectory) {
-                workspaceDir.walkTopDown().count { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }
-            } else 0
-            userFiles == 0
-        }
-        if (candidates.isEmpty()) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_no_empty_projects)) }
-            return
-        }
-        val removedIds = candidates.map { it.id }.toSet()
-        _state.update { current ->
-            current.copy(
-                projects = current.projects.filterNot { it.id in removedIds },
-                toastMessage = str(R.string.vm_empty_projects_removed, candidates.size),
-            )
-        }
-        preferences.saveProjects(_state.value.projects)
-        folderMetadataCache.keys.removeAll { key -> removedIds.any { key.startsWith("$it:") } }
+        // Scanning reads every transcript and walks every workspace tree — seconds of
+        // main-thread I/O per project, the same freeze as in [closeProject]. Scan in
+        // the background and only hop back to the main thread for the list update.
         viewModelScope.launch(Dispatchers.IO) {
-            candidates.forEach { project ->
-                File(filesDir, "workspaces/${project.id}").deleteRecursively()
-                terminalHistoryFile(project.id).delete()
-                androidBuildRecordFile(project.id).delete()
-                preferences.deleteProjectChats(project.id)
+            val candidates = state.projects.filter { project ->
+                if (project.id == activeId) return@filter false
+                val chats = preferences.loadProjectChats(project.id)
+                val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
+                if (userMessages > 0) return@filter false
+                val workspaceDir = File(filesDir, "workspaces/${project.id}")
+                val userFiles = if (workspaceDir.isDirectory) {
+                    workspaceDir.walkTopDown().count { file ->
+                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                    }
+                } else 0
+                userFiles == 0
+            }.map { it.id }.toMutableSet()
+            if (candidates.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    _state.update { it.copy(toastMessage = str(R.string.vm_no_empty_projects)) }
+                }
+                return@launch
+            }
+            // Re-check on the main thread before touching anything: a project may have
+            // been opened, or a task started, while the scan was running.
+            withContext(Dispatchers.Main) {
+                val current = _state.value
+                candidates.removeAll { id ->
+                    current.activeProject?.id == id ||
+                        !current.projects.any { it.id == id } ||
+                        current.isRunning || current.projectTerminalRunning || current.androidBuildRunning
+                }
+                if (candidates.isNotEmpty()) {
+                    _state.update { s ->
+                        s.copy(
+                            projects = s.projects.filterNot { it.id in candidates },
+                            toastMessage = str(R.string.vm_empty_projects_removed, candidates.size),
+                        )
+                    }
+                    preferences.saveProjects(_state.value.projects)
+                }
+            }
+            if (candidates.isEmpty()) return@launch
+            folderMetadataCache.keys.removeAll { key -> candidates.any { key.startsWith("$it:") } }
+            candidates.forEach { id ->
+                File(filesDir, "workspaces/$id").deleteRecursively()
+                terminalHistoryFile(id).delete()
+                androidBuildRecordFile(id).delete()
+                preferences.deleteProjectChats(id)
             }
         }
     }
